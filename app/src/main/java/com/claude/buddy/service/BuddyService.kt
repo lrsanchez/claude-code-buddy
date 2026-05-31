@@ -49,6 +49,12 @@ class BuddyService : Service() {
         gattServer = NusGattServer(this, scope, object : GattServerListener {
             override fun onLineReceived(device: BluetoothDevice, line: String) {
                 resetDeadLinkTimer()
+                // If onConnectionStateChange didn't fire reliably, receiving
+                // any data is enough proof the link is alive
+                if (!stateManager.state.value.isConnected) {
+                    stateManager.onConnected()
+                    advertiser.stop()
+                }
                 protocol.handleLine(line)
             }
             override fun onDeviceConnected(device: BluetoothDevice) {
