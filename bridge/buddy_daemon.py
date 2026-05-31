@@ -242,9 +242,9 @@ class BuddyDaemon:
         while True:
             try: await self._connect_and_run()
             except (BleakError, asyncio.TimeoutError, OSError) as e:
-                _log("DISCONNECT", f"BLE dropped ({e!r}) — retrying in 5 s", logging.WARNING)
+                _log("DISCONNECT", f"BLE dropped ({e!r}) — retrying in 10 s", logging.WARNING)
                 self.ble_client = None
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
 
     async def _connect_and_run(self):
         _log("SCAN", "Scanning for Claude Buddy…")
@@ -255,6 +255,9 @@ class BuddyDaemon:
         if device is None:
             _log("SCAN", "No Claude* device found — will retry", logging.WARNING); return
         _log("CONNECT", f"Found {BOLD}{device.name}{R}  {DIM}({device.address}){R}")
+        # Brief pause so Android's GATT server is fully ready before we start
+        # service discovery — avoids "failed to discover services" on rapid reconnects
+        await asyncio.sleep(1.5)
         async with BleakClient(device, disconnected_callback=lambda _: self._on_disc(), timeout=30.0) as client:
             self.ble_client = client
             await client.start_notify(NUS_TX, self._on_notify)

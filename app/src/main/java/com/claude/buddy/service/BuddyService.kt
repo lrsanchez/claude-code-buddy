@@ -19,7 +19,7 @@ import kotlinx.coroutines.*
 private const val TAG = "BuddyService"
 private const val CHANNEL_ID = "buddy_service"
 private const val NOTIF_ID = 1
-private const val DEAD_LINK_MS = 30_000L
+private const val DEAD_LINK_MS = 300_000L // 5 min — true disconnects fire onDeviceDisconnected immediately
 
 class BuddyService : Service() {
 
