@@ -26,6 +26,7 @@ NUS_TX        = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # device notifies here (
 DECISION_CHAR = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"  # daemon polls here for Approve/Deny
 
 SOCKET_PATH    = "/tmp/claude-buddy.sock"
+SESSION_CACHE  = "/tmp/claude-buddy-sessions.json"
 HEARTBEAT_S    = 3
 BLE_CHUNK      = 20
 SCAN_TIMEOUT   = 30.0
@@ -164,6 +165,34 @@ class BuddyDaemon:
         self._start_time  = time.time()
         self._approve_cnt = 0
         self._deny_cnt    = 0
+        self._restore_sessions()
+
+    def _restore_sessions(self):
+        """Reload transcript paths from last run so history shows on reconnect."""
+        try:
+            with open(SESSION_CACHE) as f:
+                for entry in json.load(f):
+                    sid   = entry.get("id", "")
+                    path  = entry.get("transcript_path", "")
+                    short = entry.get("short_id", sid[-4:].upper() if len(sid) >= 4 else sid)
+                    if sid and path and os.path.exists(path):
+                        s = Session(id=sid, short_id=short, transcript_path=path)
+                        refresh_entries(s)
+                        s.session_start_tokens = 0
+                        self._sessions[sid] = s
+                        _log("SESSION", f"Restored session {BOLD}{short}{R} from cache")
+        except (OSError, json.JSONDecodeError, KeyError):
+            pass
+
+    def _persist_sessions(self):
+        """Save current transcript paths so the next daemon run can restore them."""
+        try:
+            data = [{"id": s.id, "short_id": s.short_id, "transcript_path": s.transcript_path}
+                    for s in self._sessions.values() if s.transcript_path and os.path.exists(s.transcript_path)]
+            with open(SESSION_CACHE, 'w') as f:
+                json.dump(data, f)
+        except OSError:
+            pass
 
     # ── Session helpers ───────────────────────────────────────────────────────
 
@@ -177,6 +206,7 @@ class BuddyDaemon:
         if transcript_path and transcript_path != s.transcript_path:
             s.transcript_path = transcript_path
             s.transcript_pos  = 0
+            self._persist_sessions()
         return s
 
     def _aggregate(self) -> dict:

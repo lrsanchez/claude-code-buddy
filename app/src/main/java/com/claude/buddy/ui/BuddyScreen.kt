@@ -382,7 +382,7 @@ fun ChatPanel(chat: List<ChatEntry>, C: BuddyColors = LocalBuddyColors.current, 
         if (reversed.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "Conversation will appear here\nonce Claude Code is active",
+                    "Connected — start a Claude Code\nsession to see the conversation",
                     style = MaterialTheme.typography.bodyLarge,
                     color = C.textSecondary.copy(alpha = 0.4f),
                     textAlign = TextAlign.Center,
