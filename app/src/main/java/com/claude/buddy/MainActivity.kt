@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
                             service.sendDecision(id, approve = false)
                         },
                         onToggleTheme = { service.stateManager.toggleTheme() },
+                        onReconnect   = { service.reconnect() },
                     )
                 } else {
                     BuddyScreen(state = state, onApprove = {}, onDeny = {})

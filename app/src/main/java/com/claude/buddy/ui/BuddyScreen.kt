@@ -45,21 +45,19 @@ fun BuddyScreen(
     onApprove: () -> Unit,
     onDeny: () -> Unit,
     onToggleTheme: () -> Unit = {},
+    onReconnect: () -> Unit = {},
 ) {
     val cfg = LocalConfiguration.current
     val isLandscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
     val C = LocalBuddyColors.current
     var activePanel by remember { mutableStateOf(ActivePanel.CHAT) }
+    val onPanelToggle = { activePanel = if (activePanel == ActivePanel.CHAT) ActivePanel.TOOLS else ActivePanel.CHAT }
 
     Box(modifier = Modifier.fillMaxSize().background(C.background)) {
         if (isLandscape) {
-            LandscapeLayout(state, C, activePanel, onToggleTheme, onPanel = {
-                activePanel = if (activePanel == ActivePanel.CHAT) ActivePanel.TOOLS else ActivePanel.CHAT
-            })
+            LandscapeLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle)
         } else {
-            PortraitLayout(state, C, activePanel, onToggleTheme, onPanel = {
-                activePanel = if (activePanel == ActivePanel.CHAT) ActivePanel.TOOLS else ActivePanel.CHAT
-            })
+            PortraitLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle)
         }
         AnimatedVisibility(
             visible = state.displayState == BuddyDisplayState.APPROVAL,
@@ -76,7 +74,7 @@ fun BuddyScreen(
 @Composable
 private fun LandscapeLayout(
     state: BuddyUiState, C: BuddyColors,
-    activePanel: ActivePanel, onToggleTheme: () -> Unit, onPanel: () -> Unit,
+    activePanel: ActivePanel, onToggleTheme: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(
@@ -89,6 +87,10 @@ private fun LandscapeLayout(
             BuddyCharacter(state.displayState, C, modifier = Modifier.size(160.dp))
             Spacer(Modifier.height(8.dp))
             StateLabel(state.displayState, C)
+            if (state.displayState == BuddyDisplayState.SLEEP) {
+                Spacer(Modifier.height(12.dp))
+                ConnectButton(C, onReconnect)
+            }
         }
         Box(Modifier.width(1.dp).fillMaxHeight().background(C.divider))
         Column(
@@ -115,7 +117,7 @@ private fun LandscapeLayout(
 @Composable
 private fun PortraitLayout(
     state: BuddyUiState, C: BuddyColors,
-    activePanel: ActivePanel, onToggleTheme: () -> Unit, onPanel: () -> Unit,
+    activePanel: ActivePanel, onToggleTheme: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -130,7 +132,11 @@ private fun PortraitLayout(
             BuddyCharacter(state.displayState, C, modifier = Modifier.size(90.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 StateLabel(state.displayState, C)
-                SessionChips(state.snapshot, C)
+                if (state.displayState == BuddyDisplayState.SLEEP) {
+                    ConnectButton(C, onReconnect)
+                } else {
+                    SessionChips(state.snapshot, C)
+                }
             }
         }
         TokenMeter(state.snapshot.tokens, state.snapshot.tokensToday, state.level, C)
@@ -144,6 +150,20 @@ private fun PortraitLayout(
                 ActivePanel.TOOLS -> ToolsPanel(state.snapshot.entries, C, Modifier.fillMaxSize())
             }
         }
+    }
+}
+
+// ── Connect button ────────────────────────────────────────────────────────────
+
+@Composable
+fun ConnectButton(C: BuddyColors = LocalBuddyColors.current, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        border = androidx.compose.foundation.BorderStroke(1.dp, C.coral),
+        shape = RoundedCornerShape(20.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        Text("Connect", fontSize = 12.sp, color = C.coral)
     }
 }
 

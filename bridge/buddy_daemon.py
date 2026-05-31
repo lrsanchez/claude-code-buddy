@@ -26,25 +26,13 @@ NUS_TX        = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # device notifies here (
 DECISION_CHAR = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"  # daemon polls here for Approve/Deny
 
 SOCKET_PATH    = "/tmp/claude-buddy.sock"
-HTTP_PORT      = 8765
-HEARTBEAT_S    = 10
+HEARTBEAT_S    = 3
 BLE_CHUNK      = 20
 SCAN_TIMEOUT   = 30.0
 PROMPT_TIMEOUT = 120.0
 CHAT_POLL_S    = 1.0
 MAX_CHAT       = 25
 MAX_ENTRIES    = 15
-
-def _local_ip() -> str:
-    import socket
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("10.255.255.255", 1))
-        return s.getsockname()[0]
-    except Exception:
-        return ""
-    finally:
-        s.close()
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 R="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
@@ -176,7 +164,6 @@ class BuddyDaemon:
         self._start_time  = time.time()
         self._approve_cnt = 0
         self._deny_cnt    = 0
-        self._local_ip    = _local_ip()
 
     # ── Session helpers ───────────────────────────────────────────────────────
 
@@ -217,8 +204,6 @@ class BuddyDaemon:
             "tokens": tokens,
             "tokens_today": today,
             "chat": self._global_chat[:MAX_CHAT],
-            "host": self._local_ip,
-            "port": HTTP_PORT,
         }
 
     # ── BLE ───────────────────────────────────────────────────────────────────
@@ -475,51 +460,13 @@ class BuddyDaemon:
 
     # ── HTTP decision endpoint ────────────────────────────────────────────────
 
-    async def http_loop(self):
-        server = await asyncio.start_server(self._handle_http, "0.0.0.0", HTTP_PORT)
-        self._local_ip = _local_ip()
-        _log("SOCKET", f"HTTP decision endpoint: http://{self._local_ip}:{HTTP_PORT}/decision")
-        async with server:
-            await server.serve_forever()
-
-    async def _handle_http(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        try:
-            line = (await reader.readline()).decode(errors="replace")
-            # Drain remaining headers
-            while True:
-                hdr = await reader.readline()
-                if hdr in (b"\r\n", b"\n", b""):
-                    break
-            # Parse: GET /decision?id=xxx&decision=once HTTP/1.1
-            parts = line.split(" ")
-            if len(parts) >= 2 and "/decision" in parts[1]:
-                qs = parts[1].split("?", 1)[1] if "?" in parts[1] else ""
-                params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
-                pid      = params.get("id", "")
-                decision = params.get("decision", "deny")
-                for s in self._sessions.values():
-                    if s.pending and s.pending.id == pid and not s.pending.future.done():
-                        s.pending.future.set_result(decision)
-                        break
-                writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
-            else:
-                writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
-            await writer.drain()
-        except Exception:
-            pass
-        finally:
-            writer.close()
-
     # ── Main ──────────────────────────────────────────────────────────────────
 
     async def run(self):
-        self._local_ip = _local_ip()
         print(f"\n{BOLD}Claude Buddy{R}  {DIM}BLE ↔ CLI bridge{R}\n"
               f"  Socket  {DIM}{SOCKET_PATH}{R}\n"
-              f"  HTTP    {DIM}http://{self._local_ip}:{HTTP_PORT}/decision{R}\n"
               f"  Tip     supports multiple simultaneous Claude Code sessions\n")
-        await asyncio.gather(self.ble_loop(), self.socket_loop(),
-                             self.chat_follow_loop(), self.http_loop())
+        await asyncio.gather(self.ble_loop(), self.socket_loop(), self.chat_follow_loop())
 
 
 if __name__ == "__main__":

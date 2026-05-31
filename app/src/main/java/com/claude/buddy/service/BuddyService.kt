@@ -106,14 +106,18 @@ class BuddyService : Service() {
     }
 
     fun sendDecision(id: String, approve: Boolean) {
-        val decision = if (approve) "once" else "deny"
-        val json     = """{"id":"$id","decision":"$decision"}"""
-        // Primary: store in DECISION characteristic — daemon polls via BLE READ (reliable)
+        val json = """{"id":"$id","decision":"${if (approve) "once" else "deny"}"}"""
         gattServer.setDecision(json)
-        // Secondary: also try TX notification (best effort, may not arrive)
         gattServer.send(protocol.buildPermissionDecision(id, approve))
         if (approve) stateManager.onApprove() else stateManager.onDeny()
         stateManager.onDecisionMade(id)
+    }
+
+    fun reconnect() {
+        // Restart advertising so the daemon picks up a fresh connection
+        advertiser.stop()
+        startAdvertising()
+        stateManager.onDisconnected() // reset to SLEEP so UI reflects re-scanning
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY

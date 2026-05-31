@@ -23,8 +23,6 @@ data class Snapshot(
     @SerialName("tokens_today") val tokensToday: Long = 0L,
     val prompt: PromptRequest? = null,
     val chat: List<ChatEntry> = emptyList(),
-    val host: String = "",
-    val port: Int = 0,
 )
 
 @Serializable
