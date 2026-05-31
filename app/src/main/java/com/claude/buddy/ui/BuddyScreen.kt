@@ -87,7 +87,7 @@ private fun LandscapeLayout(
             BuddyCharacter(state.displayState, C, modifier = Modifier.size(160.dp))
             Spacer(Modifier.height(8.dp))
             StateLabel(state.displayState, C)
-            if (state.displayState == BuddyDisplayState.SLEEP) {
+            if (state.displayState == BuddyDisplayState.SLEEP || state.displayState == BuddyDisplayState.SEARCHING) {
                 Spacer(Modifier.height(12.dp))
                 ConnectButton(C, onReconnect)
             }
@@ -132,7 +132,7 @@ private fun PortraitLayout(
             BuddyCharacter(state.displayState, C, modifier = Modifier.size(90.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 StateLabel(state.displayState, C)
-                if (state.displayState == BuddyDisplayState.SLEEP) {
+                if (state.displayState == BuddyDisplayState.SLEEP || state.displayState == BuddyDisplayState.SEARCHING) {
                     ConnectButton(C, onReconnect)
                 } else {
                     SessionChips(state.snapshot, C)
@@ -274,6 +274,7 @@ fun BuddyCharacter(displayState: BuddyDisplayState, C: BuddyColors = LocalBuddyC
     val bodyColor by animateColorAsState(
         when (displayState) {
             BuddyDisplayState.SLEEP     -> C.textSecondary.copy(alpha = 0.3f)
+            BuddyDisplayState.SEARCHING -> C.teal.copy(alpha = 0.4f)
             BuddyDisplayState.IDLE      -> C.coral.copy(alpha = 0.8f)
             BuddyDisplayState.BUSY      -> C.teal.copy(alpha = 0.9f)
             BuddyDisplayState.ATTENTION -> C.amber
@@ -311,6 +312,7 @@ fun BuddyCharacter(displayState: BuddyDisplayState, C: BuddyColors = LocalBuddyC
 fun StateLabel(displayState: BuddyDisplayState, C: BuddyColors = LocalBuddyColors.current, modifier: Modifier = Modifier) {
     val (label, color) = when (displayState) {
         BuddyDisplayState.SLEEP     -> "sleeping"          to C.textSecondary
+        BuddyDisplayState.SEARCHING -> "searching…"        to C.teal
         BuddyDisplayState.IDLE      -> "idle"              to C.textSecondary
         BuddyDisplayState.BUSY      -> "working"           to C.teal
         BuddyDisplayState.ATTENTION -> "needs you"         to C.amber

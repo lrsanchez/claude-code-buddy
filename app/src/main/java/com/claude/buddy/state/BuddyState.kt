@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 enum class BuddyDisplayState {
-    SLEEP, IDLE, BUSY, ATTENTION, CELEBRATE, APPROVAL
+    SLEEP, SEARCHING, IDLE, BUSY, ATTENTION, CELEBRATE, APPROVAL
 }
 
 data class BuddyUiState(
@@ -74,6 +74,8 @@ class BuddyStateManager(
     }
 
     fun onConnected() = _state.update { it.copy(isConnected = true, displayState = BuddyDisplayState.IDLE) }
+
+    fun onSearching() = _state.update { it.copy(isConnected = false, displayState = BuddyDisplayState.SEARCHING) }
 
     fun onDisconnected() = _state.update {
         it.copy(isConnected = false, displayState = BuddyDisplayState.SLEEP, snapshot = Snapshot())

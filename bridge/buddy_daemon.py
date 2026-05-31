@@ -276,7 +276,7 @@ class BuddyDaemon:
         data = (line + "\n").encode("utf-8")
         async with self._send_lock:
             for i in range(0, len(data), BLE_CHUNK):
-                try: await self.ble_client.write_gatt_char(NUS_RX, data[i:i+BLE_CHUNK], response=False)
+                try: await self.ble_client.write_gatt_char(NUS_RX, data[i:i+BLE_CHUNK], response=True)
                 except BleakError as e:
                     _log("ERROR", f"Write: {e}", logging.WARNING); break
 

@@ -114,10 +114,9 @@ class BuddyService : Service() {
     }
 
     fun reconnect() {
-        // Restart advertising so the daemon picks up a fresh connection
         advertiser.stop()
         startAdvertising()
-        stateManager.onDisconnected() // reset to SLEEP so UI reflects re-scanning
+        stateManager.onSearching() // show "searching" while daemon re-discovers
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
