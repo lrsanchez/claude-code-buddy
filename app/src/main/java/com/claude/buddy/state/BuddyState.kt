@@ -106,6 +106,7 @@ class BuddyStateManager(
             it.copy(
                 snapshot = effectiveSnapshot,
                 displayState = displayState,
+                isConnected = true,  // receiving any snapshot = link is alive
                 level = if (celebrate) newLevel else it.level,
                 pendingCelebrate = celebrate,
             )
