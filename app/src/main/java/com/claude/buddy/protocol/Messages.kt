@@ -11,6 +11,17 @@ data class ChatEntry(
     val session: String = "", // session tag when multiple sessions active
 )
 
+@Serializable
+data class SessionInfo(
+    val id: String = "",
+    val short: String = "",
+    val running: Boolean = false,
+    val waiting: Boolean = false,
+    val tokens: Long = 0L,
+    val entries: List<String> = emptyList(),
+    val chat: List<ChatEntry> = emptyList(),
+)
+
 // Inbound: heartbeat snapshot
 @Serializable
 data class Snapshot(
@@ -23,6 +34,7 @@ data class Snapshot(
     @SerialName("tokens_today") val tokensToday: Long = 0L,
     val prompt: PromptRequest? = null,
     val chat: List<ChatEntry> = emptyList(),
+    val sessions: List<SessionInfo> = emptyList(),
 )
 
 @Serializable

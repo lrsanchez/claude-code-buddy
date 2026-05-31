@@ -88,6 +88,7 @@ class Session:
     running: bool        = False
     waiting: bool        = False
     entries: list        = field(default_factory=list)
+    chat: list           = field(default_factory=list)  # this session's own chat
     tokens: int          = 0
     tokens_today: int    = 0
     session_start_tokens: int = 0
@@ -233,6 +234,16 @@ class BuddyDaemon:
         # msg from first waiting session
         msg = next((s.entries[0] if s.entries else f"approve — [{s.short_id}]"
                     for s in sessions if s.waiting), "")
+        # Per-session breakdown so the app can filter to a single session
+        per_session = [{
+            "id":      s.id,
+            "short":   s.short_id,
+            "running": s.running,
+            "waiting": s.waiting,
+            "tokens":  s.tokens,
+            "entries": s.entries[:MAX_ENTRIES],
+            "chat":    s.chat[:MAX_CHAT],
+        } for s in sessions]
         return {
             "total": len(sessions),
             "running": running,
@@ -241,7 +252,8 @@ class BuddyDaemon:
             "entries": entries[:MAX_ENTRIES],
             "tokens": tokens,
             "tokens_today": today,
-            "chat": self._global_chat[:MAX_CHAT],
+            "chat": self._global_chat[:MAX_CHAT],  # merged ("All" view)
+            "sessions": per_session,
         }
 
     # ── BLE ───────────────────────────────────────────────────────────────────
@@ -456,12 +468,16 @@ class BuddyDaemon:
                     changed = True
                     for e in reversed(new_entries):
                         entry = {"role": e["role"], "text": e["text"]}
+                        # per-session chat (untagged — the panel header shows which)
+                        session.chat.insert(0, dict(entry))
+                        # global merged chat (tagged when multiple sessions)
                         if multi: entry["session"] = session.short_id
                         self._global_chat.insert(0, entry)
                         who = "You" if e["role"]=="user" else "Claude"
                         icon = "CHAT_USER" if e["role"]=="user" else "CHAT_AI"
                         tag = f" {DIM}[{session.short_id}]{R}" if multi else ""
                         _log(icon, f"{BOLD}{who}{R}{tag}: {DIM}{e['text'][:70]}{R}")
+                    session.chat = session.chat[:MAX_CHAT]
                     self._global_chat = self._global_chat[:MAX_CHAT]
                 except Exception as exc:
                     logging.getLogger("buddy").debug(f"chat_follow [{session.short_id}]: {exc}")

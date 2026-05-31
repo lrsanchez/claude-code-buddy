@@ -6,7 +6,9 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -32,12 +34,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claude.buddy.protocol.ChatEntry
+import com.claude.buddy.protocol.SessionInfo
 import com.claude.buddy.protocol.Snapshot
 import com.claude.buddy.state.BuddyDisplayState
 import com.claude.buddy.state.BuddyUiState
 import com.claude.buddy.ui.theme.*
 
 enum class ActivePanel { CHAT, TOOLS }
+
+/** Bundle of the currently-displayed panel data + session selection state. */
+data class PanelView(
+    val chat: List<ChatEntry>,
+    val entries: List<String>,
+    val sessions: List<SessionInfo>,
+    val selected: String?,            // null = "All"
+    val onSelect: (String?) -> Unit,
+)
 
 @Composable
 fun BuddyScreen(
@@ -53,11 +65,24 @@ fun BuddyScreen(
     var activePanel by remember { mutableStateOf(ActivePanel.CHAT) }
     val onPanelToggle = { activePanel = if (activePanel == ActivePanel.CHAT) ActivePanel.TOOLS else ActivePanel.CHAT }
 
+    // Session selector: null = "All" (merged). When >1 session, the user can
+    // pick one to follow so chat/tools aren't a confusing interleaved stream.
+    val sessions = state.snapshot.sessions
+    var selectedSession by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sessions) {
+        if (selectedSession != null && sessions.none { it.id == selectedSession }) selectedSession = null
+    }
+    val sel = sessions.firstOrNull { it.id == selectedSession }
+    val displayChat    = sel?.chat ?: state.snapshot.chat
+    val displayEntries = sel?.entries ?: state.snapshot.entries
+
+    val view = PanelView(displayChat, displayEntries, sessions, selectedSession) { selectedSession = it }
+
     Box(modifier = Modifier.fillMaxSize().background(C.background)) {
         if (isLandscape) {
-            LandscapeLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle)
+            LandscapeLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle, view)
         } else {
-            PortraitLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle)
+            PortraitLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle, view)
         }
         AnimatedVisibility(
             visible = state.displayState == BuddyDisplayState.APPROVAL,
@@ -75,6 +100,7 @@ fun BuddyScreen(
 private fun LandscapeLayout(
     state: BuddyUiState, C: BuddyColors,
     activePanel: ActivePanel, onToggleTheme: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit,
+    view: PanelView,
 ) {
     Row(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(
@@ -99,13 +125,14 @@ private fun LandscapeLayout(
         ) {
             SessionChips(state.snapshot, C)
             TokenMeter(state.snapshot.tokens, state.snapshot.tokensToday, state.level, C)
+            SessionSelector(view, C)
             PanelToggle(activePanel, C, onPanel)
             AnimatedContent(targetState = activePanel,
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
                 label = "panel", modifier = Modifier.weight(1f)) { panel ->
                 when (panel) {
-                    ActivePanel.CHAT  -> ChatPanel(state.snapshot.chat, C, Modifier.fillMaxSize())
-                    ActivePanel.TOOLS -> ToolsPanel(state.snapshot.entries, C, Modifier.fillMaxSize())
+                    ActivePanel.CHAT  -> ChatPanel(view.chat, C, Modifier.fillMaxSize())
+                    ActivePanel.TOOLS -> ToolsPanel(view.entries, C, Modifier.fillMaxSize())
                 }
             }
         }
@@ -118,6 +145,7 @@ private fun LandscapeLayout(
 private fun PortraitLayout(
     state: BuddyUiState, C: BuddyColors,
     activePanel: ActivePanel, onToggleTheme: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit,
+    view: PanelView,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -141,13 +169,14 @@ private fun PortraitLayout(
         }
         TokenMeter(state.snapshot.tokens, state.snapshot.tokensToday, state.level, C)
         HorizontalDivider(color = C.divider, thickness = 1.dp)
+        SessionSelector(view, C)
         PanelToggle(activePanel, C, onPanel)
         AnimatedContent(targetState = activePanel,
             transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
             label = "panel", modifier = Modifier.weight(1f)) { panel ->
             when (panel) {
-                ActivePanel.CHAT  -> ChatPanel(state.snapshot.chat, C, Modifier.fillMaxSize())
-                ActivePanel.TOOLS -> ToolsPanel(state.snapshot.entries, C, Modifier.fillMaxSize())
+                ActivePanel.CHAT  -> ChatPanel(view.chat, C, Modifier.fillMaxSize())
+                ActivePanel.TOOLS -> ToolsPanel(view.entries, C, Modifier.fillMaxSize())
             }
         }
     }
@@ -215,6 +244,46 @@ private fun ConnectionDot(connected: Boolean, C: BuddyColors) {
             .clip(CircleShape)
             .background(if (connected) C.green else C.textSecondary)
     )
+}
+
+// ── Session selector ──────────────────────────────────────────────────────────
+
+@Composable
+private fun SessionSelector(view: PanelView, C: BuddyColors) {
+    // Only show when there's more than one session to disambiguate
+    if (view.sessions.size <= 1) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SessionTab("all", view.selected == null, false, C) { view.onSelect(null) }
+        view.sessions.forEach { s ->
+            SessionTab(s.short, view.selected == s.id, s.waiting, C) { view.onSelect(s.id) }
+        }
+    }
+}
+
+@Composable
+private fun SessionTab(label: String, selected: Boolean, waiting: Boolean, C: BuddyColors, onClick: () -> Unit) {
+    val bg    by animateColorAsState(if (selected) C.coral else C.card, label = "stab_bg")
+    val color by animateColorAsState(if (selected) C.onCoral else C.textSecondary, label = "stab_fg")
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (waiting) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(if (selected) C.onCoral else C.amber))
+        }
+        Text(label, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = color)
+    }
 }
 
 // ── Panel toggle ──────────────────────────────────────────────────────────────
