@@ -113,9 +113,6 @@ class NusGattServer(
             if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
                 subscribedDevices[device.address] = device
                 Log.d(TAG, "TX subscribed: ${device.address}")
-                // Notify connected so the dead-link timer resets — some devices
-                // delay or skip writes briefly after connecting
-                listener.onDeviceConnected(device)
             } else {
                 subscribedDevices.remove(device.address)
                 Log.d(TAG, "TX unsubscribed: ${device.address}")
