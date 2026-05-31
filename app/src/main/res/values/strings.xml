@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Claude Buddy</string>
+    <string name="notification_channel_name">Claude Buddy Service</string>
+    <string name="notification_title">Claude Buddy</string>
+    <string name="notification_text">Listening for Claude Code sessions…</string>
+</resources>

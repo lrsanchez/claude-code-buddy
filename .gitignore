@@ -1,0 +1,22 @@
+# Build
+app/build/
+build/
+.gradle/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Gradle wrapper cache
+gradle/wrapper/gradle-wrapper.jar
+
+# Secrets (none yet, but just in case)
+*.keystore
+*.jks
+
+# Python
+__pycache__/
+*.pyc
+bridge/__pycache__/

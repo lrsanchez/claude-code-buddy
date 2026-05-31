@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Claude Code Buddy icon — a simplified buddy face inside a terminal frame,
+  rendered in Claude coral on black. The face mirrors the in-app character.
+  Safe zone: 108dp canvas, artwork within center 72dp (18dp padding each side).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Rounded terminal frame -->
+    <path
+        android:pathData="M24,20 L84,20 Q88,20 88,24 L88,84 Q88,88 84,88 L24,88 Q20,88 20,84 L20,24 Q20,20 24,20 Z"
+        android:fillColor="#D97757" />
+
+    <!-- Title bar strip -->
+    <path
+        android:pathData="M20,20 L88,20 L88,32 Q88,32 84,32 L24,32 Q20,32 20,32 Z"
+        android:fillColor="#000000"
+        android:fillAlpha="0.35" />
+
+    <!-- Title bar dots (traffic-light style) -->
+    <path android:pathData="M30,26 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" android:fillColor="#FF5F57" />
+    <path android:pathData="M40,26 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" android:fillColor="#FFBD2E" />
+    <path android:pathData="M50,26 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" android:fillColor="#28C840" />
+
+    <!-- Buddy face — outer circle -->
+    <path
+        android:pathData="M54,62 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0"
+        android:fillColor="#000000"
+        android:fillAlpha="0.20" />
+
+    <!-- Buddy face — fill -->
+    <path
+        android:pathData="M54,62 m-20,0 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0"
+        android:fillColor="#1A0A00"
+        android:fillAlpha="0.80" />
+
+    <!-- Left eye -->
+    <path
+        android:pathData="M46,58 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"
+        android:fillColor="#D97757" />
+
+    <!-- Right eye -->
+    <path
+        android:pathData="M62,58 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"
+        android:fillColor="#D97757" />
+
+    <!-- Subtle smile arc -->
+    <path
+        android:pathData="M46,68 Q54,74 62,68"
+        android:strokeColor="#D97757"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Terminal prompt at bottom: >_ -->
+    <path
+        android:pathData="M30,80 L35,84 L30,88"
+        android:strokeColor="#000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M38,88 L46,88"
+        android:strokeColor="#000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+</vector>

@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /var/home/leandro/Documents/dev/personal/claude-code-buddy/bridge/buddy_hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /var/home/leandro/Documents/dev/personal/claude-code-buddy/bridge/buddy_hook.py",
+            "timeout": 130,
+            "statusMessage": "⏳ Waiting for Hardware Buddy approval…"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /var/home/leandro/Documents/dev/personal/claude-code-buddy/bridge/buddy_hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /var/home/leandro/Documents/dev/personal/claude-code-buddy/bridge/buddy_hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /var/home/leandro/Documents/dev/personal/claude-code-buddy/bridge/buddy_hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
