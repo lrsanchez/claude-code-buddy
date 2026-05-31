@@ -423,7 +423,7 @@ fun ToolsPanel(entries: List<String>, C: BuddyColors = LocalBuddyColors.current,
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(entries, key = { it }) { entry ->
+                itemsIndexed(entries, key = { index, _ -> index }) { _, entry ->
                     Text(entry, style = MaterialTheme.typography.bodySmall, color = C.textPrimary,
                         maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 1.dp))
                 }
