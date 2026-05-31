@@ -19,6 +19,8 @@ from typing import Optional
 from bleak import BleakScanner, BleakClient
 from bleak.exc import BleakError
 
+from ble_pairing import PairingManager
+
 # ── NUS UUIDs ─────────────────────────────────────────────────────────────────
 NUS_SERVICE   = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 NUS_RX        = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # daemon writes snapshots here
@@ -28,9 +30,12 @@ DECISION_CHAR = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"  # daemon polls here for 
 SOCKET_PATH    = "/tmp/claude-buddy.sock"
 SESSION_CACHE  = "/tmp/claude-buddy-sessions.json"
 HEARTBEAT_S    = 3
+KEEPALIVE_S    = 0.7  # continuous DECISION reads keep flaky peripheral radios awake
 BLE_CHUNK      = 20
 SCAN_TIMEOUT   = 30.0
 PROMPT_TIMEOUT = 120.0
+BUDDY_DECISION_TIMEOUT = 60.0  # wait this long for a tablet tap, then defer to CLI
+ENABLE_BONDING = os.environ.get("BUDDY_BONDING", "0") == "1"  # opt-in; off by default
 CHAT_POLL_S    = 1.0
 MAX_CHAT       = 25
 MAX_ENTRIES    = 15
@@ -165,6 +170,8 @@ class BuddyDaemon:
         self._start_time  = time.time()
         self._approve_cnt = 0
         self._deny_cnt    = 0
+        self._pairing     = PairingManager()
+        self._secure      = False  # True once bonded — reported in status ack
         self._restore_sessions()
 
     def _restore_sessions(self):
@@ -255,17 +262,91 @@ class BuddyDaemon:
         if device is None:
             _log("SCAN", "No Claude* device found — will retry", logging.WARNING); return
         _log("CONNECT", f"Found {BOLD}{device.name}{R}  {DIM}({device.address}){R}")
-        # Brief pause so Android's GATT server is fully ready before we start
-        # service discovery — avoids "failed to discover services" on rapid reconnects
-        await asyncio.sleep(1.5)
-        async with BleakClient(device, disconnected_callback=lambda _: self._on_disc(), timeout=30.0) as client:
+
+        # Connect IMMEDIATELY — the e-reader uses BLE privacy (rotating random
+        # address). Any delay lets the address go stale → 'br-connection-canceled'.
+        # Retry the connect a few times on transient cancels (BlueZ flakiness).
+        # NOTE: some cheaper BLE peripherals (e-readers) take 20-40s to actually
+        # accept an incoming GATT connection. Use a generous 60s connect timeout.
+        client = None
+        for attempt in range(3):
+            try:
+                client = BleakClient(device, disconnected_callback=lambda _: self._on_disc(), timeout=90.0)
+                await client.connect()
+                break
+            except (BleakError, asyncio.TimeoutError, OSError) as e:
+                msg = repr(e)
+                if attempt < 2 and ("canceled" in msg or "cancelled" in msg or "discover services" in msg or "Unlikely" in msg):
+                    _log("SCAN", f"Connect attempt {attempt+1} failed ({msg[:40]}…) — retrying", logging.WARNING)
+                    await asyncio.sleep(1)
+                    continue
+                raise
+        if client is None or not client.is_connected:
+            return
+
+        try:
             self.ble_client = client
+
+            # Bonding is OPT-IN (BUDDY_BONDING=1). It gives auto-reconnect on
+            # capable peripherals, but some devices (e.g. Boox e-readers) serve
+            # zero GATT services once bonded, so it's off by default.
+            if ENABLE_BONDING:
+                try:
+                    paired = await self._pairing.pair_and_trust(device.address)
+                    self._secure = bool(paired)
+                    if paired:
+                        _log("CONNECT", f"{GREEN}Bonded{R} + trusted {DIM}({device.address}){R}")
+                except Exception as exc:
+                    logging.getLogger("buddy").debug(f"pairing note: {exc}")
+
             await client.start_notify(NUS_TX, self._on_notify)
-            _log("CONNECT", f"Connected — heartbeats every {HEARTBEAT_S} s")
-            await self._send_snapshot()
-            while client.is_connected:
-                await asyncio.sleep(HEARTBEAT_S)
-                await self._send_snapshot()
+
+            _log("CONNECT", f"Connected — keepalive {KEEPALIVE_S}s · heartbeat {HEARTBEAT_S}s")
+            # Flash a brief "✓ Connected" card on the tablet as a handshake: it
+            # wakes the radio and gives clear visual confirmation the link is
+            # live. Auto-clears after ~2.5s; taps on it are harmless (no pending
+            # session prompt matches its id, so the keepalive ignores any reply).
+            await self._send_snapshot(prompt={"id": "wake", "tool": "✓ Connected",
+                                              "hint": "Claude Buddy is linked"})
+            await asyncio.sleep(2.5)
+            await self._send_snapshot()  # clear the wake card
+            # Continuous keepalive reads keep the peripheral's radio awake so the
+            # link stays up (flaky e-ink BLE drops idle connections). Runs the
+            # whole session, also picking up Approve/Deny decisions immediately.
+            keepalive = asyncio.create_task(self._keepalive_loop(client))
+            try:
+                while client.is_connected:
+                    await asyncio.sleep(HEARTBEAT_S)
+                    await self._send_snapshot()
+            finally:
+                keepalive.cancel()
+        finally:
+            try: await client.disconnect()
+            except Exception: pass
+            self.ble_client = None
+
+    async def _keepalive_loop(self, client):
+        """Read the DECISION characteristic on a tight interval. Two purposes:
+        (1) continuous GATT traffic keeps a dozing peripheral radio awake so the
+        connection doesn't drop while idle; (2) picks up Approve/Deny decisions."""
+        while True:
+            try:
+                if not client.is_connected:
+                    return
+                data = await client.read_gatt_char(DECISION_CHAR)
+                text = data.decode("utf-8", errors="replace").strip()
+                if text:
+                    msg = json.loads(text)
+                    pid = msg.get("id")
+                    for s in self._sessions.values():
+                        if s.pending and s.pending.id == pid and not s.pending.future.done():
+                            s.pending.future.set_result(msg.get("decision", "deny"))
+                            break
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logging.getLogger("buddy").debug(f"keepalive read: {e}")
+            await asyncio.sleep(KEEPALIVE_S)
 
     def _on_disc(self):
         _log("DISCONNECT", "BLE disconnected"); self.ble_client = None
@@ -305,19 +386,34 @@ class BuddyDaemon:
         await self._send_line(json.dumps(snap))
 
     async def _send_line(self, line: str):
-        if not self.ble_client or not self.ble_client.is_connected: return
+        # Capture the client locally — the disconnect callback can null
+        # self.ble_client mid-write (across an await), which would crash.
+        client = self.ble_client
+        if not client or not client.is_connected: return
         data = (line + "\n").encode("utf-8")
+        # Use the negotiated MTU (often 517) instead of the 23-byte default so a
+        # snapshot goes in 1-3 writes, not 30-100. Tiny acked writes on a slow
+        # peripheral take seconds and the link drops mid-barrage — this fixes that.
+        try:
+            chunk = max((client.mtu_size or 23) - 3, 20)
+        except Exception:
+            chunk = BLE_CHUNK
         async with self._send_lock:
-            for i in range(0, len(data), BLE_CHUNK):
-                try: await self.ble_client.write_gatt_char(NUS_RX, data[i:i+BLE_CHUNK], response=True)
-                except BleakError as e:
-                    _log("ERROR", f"Write: {e}", logging.WARNING); break
+            for i in range(0, len(data), chunk):
+                c = self.ble_client
+                if not c or not c.is_connected:
+                    break
+                try:
+                    await c.write_gatt_char(NUS_RX, data[i:i+chunk], response=True)
+                except Exception as e:  # disconnect mid-write must never crash the daemon
+                    logging.getLogger("buddy").debug(f"write dropped: {e}")
+                    break
 
     def _status_ack(self) -> str:
         import resource
         return json.dumps({
             "ack":"status","ok":True,"data":{
-                "name":"Claude CLI","sec":False,
+                "name":"Claude CLI","sec":self._secure,
                 "sys":{"up":int(time.time()-self._start_time),
                        "heap":resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*1024},
                 "stats":{"appr":self._approve_cnt,"deny":self._deny_cnt,
@@ -394,26 +490,6 @@ class BuddyDaemon:
         _log("SUBMIT", f"Session {BOLD}{s.short_id}{R} — generating response")
         await self._send_snapshot()
 
-    async def _poll_decision(self, prompt_id: str, future: asyncio.Future):
-        """Poll DECISION_CHAR every 500ms until we get a matching decision or future resolves."""
-        POLL_MS = 0.5
-        while not future.done():
-            try:
-                if self.ble_client and self.ble_client.is_connected:
-                    data = await self.ble_client.read_gatt_char(DECISION_CHAR)
-                    text = data.decode("utf-8", errors="replace").strip()
-                    if text:
-                        msg = json.loads(text)
-                        if msg.get("id") == prompt_id and not future.done():
-                            logging.getLogger("buddy").debug(f"DECISION poll hit: {text}")
-                            future.set_result(msg.get("decision", "deny"))
-                            return
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
-                logging.getLogger("buddy").debug(f"poll error: {e}")
-            await asyncio.sleep(POLL_MS)
-
     async def _pre_tool(self, msg: dict) -> dict:
         sid  = msg.get("session_id","unknown")
         tool = msg.get("tool_name","?")
@@ -421,6 +497,13 @@ class BuddyDaemon:
         hint = str(inp.get("command") or inp.get("file_path") or
                    inp.get("description") or inp.get("prompt") or "")[:100].replace("\n"," ")
         s = self._get_session(sid, msg.get("transcript_path",""))
+
+        # The buddy is an ENHANCEMENT, not a hard gate. If the tablet isn't
+        # connected, defer immediately so Claude Code's own permission flow
+        # handles it — never block the CLI on an unreachable device.
+        if not self.ble_client or not self.ble_client.is_connected:
+            return {"defer": True}
+
         s.running = True
         s.waiting = True
 
@@ -437,34 +520,36 @@ class BuddyDaemon:
         _log("WAIT", f"{BOLD}{tool}{R}{tag}  {DIM}{hint_short}{R}")
         await self._send_snapshot(prompt=prompt)
 
-        # Run BLE READ polling concurrently with notification listener
-        poll_task = asyncio.create_task(self._poll_decision(pid, future))
+        # The always-on keepalive loop polls DECISION and resolves this future.
+        # On timeout, DEFER (not deny) so the CLI's normal flow takes over —
+        # either approval path works, and we never hard-block.
+        deferred = False
         try:
-            decision = await asyncio.wait_for(future, timeout=PROMPT_TIMEOUT)
+            decision = await asyncio.wait_for(future, timeout=BUDDY_DECISION_TIMEOUT)
         except asyncio.TimeoutError:
-            decision = "deny"
-            _log("DENY", f"Timeout — auto-denied {tool}", logging.WARNING)
+            deferred = True
+            decision = None
+            _log("INFO", f"No tablet response — deferring {tool} to CLI", logging.WARNING)
         finally:
-            poll_task.cancel()
             s.pending       = None
             s.active_prompt = None  # clear so heartbeats stop sending the prompt
 
-        if decision == "once":
-            self._approve_cnt += 1
-            _log("APPROVE", f"{GREEN}{BOLD}{tool}{R}{tag}  {DIM}[✔{self._approve_cnt} ✘{self._deny_cnt}]{R}")
-            result = {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}
-        else:
-            self._deny_cnt += 1
-            _log("DENY", f"{RED}{BOLD}{tool}{R}{tag}  {DIM}[✔{self._approve_cnt} ✘{self._deny_cnt}]{R}")
-            result = {"hookSpecificOutput":{
-                "hookEventName":"PreToolUse","permissionDecision":"deny",
-                "permissionDecisionReason":"Denied via Claude Buddy",
-            }}
-        # Tool is executing (approved) or Claude will respond to denial — still running
         s.waiting = False
         s.running = True
         await self._send_snapshot()
-        return result
+
+        if deferred:
+            return {"defer": True}
+        if decision == "once":
+            self._approve_cnt += 1
+            _log("APPROVE", f"{GREEN}{BOLD}{tool}{R}{tag}  {DIM}[✔{self._approve_cnt} ✘{self._deny_cnt}]{R}")
+            return {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}
+        self._deny_cnt += 1
+        _log("DENY", f"{RED}{BOLD}{tool}{R}{tag}  {DIM}[✔{self._approve_cnt} ✘{self._deny_cnt}]{R}")
+        return {"hookSpecificOutput":{
+            "hookEventName":"PreToolUse","permissionDecision":"deny",
+            "permissionDecisionReason":"Denied via Claude Buddy",
+        }}
 
     async def _post_tool(self, msg: dict):
         sid = msg.get("session_id","unknown")
@@ -491,14 +576,16 @@ class BuddyDaemon:
 
     # ── Main ──────────────────────────────────────────────────────────────────
 
-    # ── HTTP decision endpoint ────────────────────────────────────────────────
-
-    # ── Main ──────────────────────────────────────────────────────────────────
-
     async def run(self):
         print(f"\n{BOLD}Claude Buddy{R}  {DIM}BLE ↔ CLI bridge{R}\n"
               f"  Socket  {DIM}{SOCKET_PATH}{R}\n"
               f"  Tip     supports multiple simultaneous Claude Code sessions\n")
+        # Register the Just Works pairing agent only when bonding is enabled
+        if ENABLE_BONDING:
+            if await self._pairing.setup():
+                _log("CONNECT", f"{DIM}Pairing agent ready (Just Works){R}")
+            else:
+                _log("ERROR", "Pairing agent unavailable — bonding may prompt", logging.WARNING)
         await asyncio.gather(self.ble_loop(), self.socket_loop(), self.chat_follow_loop())
 
 

@@ -107,7 +107,13 @@ def main():
             "session_id":       session_id,
             "permission_mode":  permission_mode,
         })
-        sys.stdout.write(json.dumps(resp))
+        # "defer" → the buddy couldn't decide (not connected, or no tap in time).
+        # Emit NO permission decision so Claude Code's own flow handles it.
+        # Either approval path works; the CLI is never hard-blocked on the tablet.
+        if resp.get("defer"):
+            sys.stdout.write(json.dumps({"continue": True}))
+        else:
+            sys.stdout.write(json.dumps(resp))
         return
 
     if event_name == "PostToolUse":

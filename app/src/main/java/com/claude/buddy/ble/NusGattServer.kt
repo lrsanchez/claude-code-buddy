@@ -128,6 +128,9 @@ class NusGattServer(
         }
         gattServer = server
 
+        // Plain (unencrypted) permissions — data flows without requiring a bond.
+        // The daemon still bonds opportunistically (for auto-connect on capable
+        // devices), but we don't gate access on it.
         val rxChar = BluetoothGattCharacteristic(
             NUS_RX_UUID,
             BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,

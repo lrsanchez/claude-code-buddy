@@ -46,11 +46,15 @@ class NusAdvertiser(private val context: Context) {
             return
         }
 
+        // LOW_LATENCY: advertise every ~100ms (vs ~250ms balanced) so the central
+        // gets far more connection windows. Critical for slow/flaky peripherals
+        // like e-ink tablets that need many connection opportunities to accept.
+        // HIGH tx power improves link reliability.
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setConnectable(true)
             .setTimeout(0) // advertise indefinitely
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .build()
 
         // Advertisement packet: NUS service UUID
