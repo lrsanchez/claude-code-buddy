@@ -31,6 +31,7 @@ SOCKET_PATH    = "/tmp/claude-buddy.sock"
 SESSION_CACHE  = "/tmp/claude-buddy-sessions.json"
 HEARTBEAT_S    = 3
 KEEPALIVE_S    = 0.7  # continuous DECISION reads keep flaky peripheral radios awake
+SESSION_TTL    = 1800  # drop a session after 30 min with no hook activity
 BLE_CHUNK      = 20
 SCAN_TIMEOUT   = 30.0
 PROMPT_TIMEOUT = 120.0
@@ -92,6 +93,7 @@ class Session:
     tokens: int          = 0
     tokens_today: int    = 0
     session_start_tokens: int = 0
+    last_seen: float     = 0.0   # wall time of last hook activity (for TTL expiry)
     pending: Optional[PendingPrompt] = None
     active_prompt: Optional[dict] = None  # kept in every snapshot while waiting
 
@@ -177,19 +179,30 @@ class BuddyDaemon:
         self._restore_sessions()
 
     def _restore_sessions(self):
-        """Reload transcript paths from last run so history shows on reconnect."""
+        """Reload only RECENT transcripts from last run (so we don't resurrect
+        sessions the user ended an hour ago). A session counts as recent if its
+        transcript file was modified within SESSION_TTL."""
+        now = time.time()
         try:
             with open(SESSION_CACHE) as f:
                 for entry in json.load(f):
                     sid   = entry.get("id", "")
                     path  = entry.get("transcript_path", "")
                     short = entry.get("short_id", sid[-4:].upper() if len(sid) >= 4 else sid)
-                    if sid and path and os.path.exists(path):
-                        s = Session(id=sid, short_id=short, transcript_path=path)
-                        refresh_entries(s)
-                        s.session_start_tokens = 0
-                        self._sessions[sid] = s
-                        _log("SESSION", f"Restored session {BOLD}{short}{R} from cache")
+                    if not (sid and path and os.path.exists(path)):
+                        continue
+                    try:
+                        mtime = os.path.getmtime(path)
+                    except OSError:
+                        continue
+                    if now - mtime > SESSION_TTL:
+                        continue  # stale — skip
+                    s = Session(id=sid, short_id=short, transcript_path=path)
+                    s.last_seen = mtime
+                    refresh_entries(s)
+                    s.session_start_tokens = 0
+                    self._sessions[sid] = s
+                    _log("SESSION", f"Restored session {BOLD}{short}{R} from cache")
         except (OSError, json.JSONDecodeError, KeyError):
             pass
 
@@ -212,13 +225,27 @@ class BuddyDaemon:
             n = len(self._sessions)
             _log("SESSION", f"Session {BOLD}{short}{R}  (total: {n})")
         s = self._sessions[session_id]
+        s.last_seen = time.time()
         if transcript_path and transcript_path != s.transcript_path:
             s.transcript_path = transcript_path
             s.transcript_pos  = 0
             self._persist_sessions()
         return s
 
+    def _prune_sessions(self):
+        """Drop sessions with no hook activity for SESSION_TTL (ended/abandoned)."""
+        now = time.time()
+        dead = [sid for sid, s in self._sessions.items()
+                if s.last_seen and (now - s.last_seen) > SESSION_TTL]
+        for sid in dead:
+            short = self._sessions[sid].short_id
+            del self._sessions[sid]
+            _log("SESSION", f"Session {short} expired (idle > {SESSION_TTL//60}m)")
+        if dead:
+            self._persist_sessions()
+
     def _aggregate(self) -> dict:
+        self._prune_sessions()
         sessions = list(self._sessions.values())
         multi = len(sessions) > 1
         running = sum(1 for s in sessions if s.running)
@@ -234,8 +261,10 @@ class BuddyDaemon:
         # msg from first waiting session
         msg = next((s.entries[0] if s.entries else f"approve — [{s.short_id}]"
                     for s in sessions if s.waiting), "")
-        # Per-session breakdown so the app can filter to a single session
-        per_session = [{
+        # Per-session breakdown so the app can filter to a single session.
+        # Only sent when 2+ sessions (the selector is hidden for one), which
+        # avoids duplicating chat/entries in the common single-session case.
+        per_session = [] if not multi else [{
             "id":      s.id,
             "short":   s.short_id,
             "running": s.running,
@@ -314,6 +343,15 @@ class BuddyDaemon:
                 raise
         if client is None or not client.is_connected:
             return
+
+        # Negotiate the real ATT MTU (~517) up front. Without this bleak reports
+        # the 23-byte default, so writes chunk at 20 bytes — a snapshot becomes
+        # hundreds of acked writes and takes minutes. Acquiring the MTU makes
+        # writes use ~514-byte chunks (25x fewer).
+        try:
+            await client._acquire_mtu()
+        except Exception as exc:
+            logging.getLogger("buddy").debug(f"_acquire_mtu note: {exc}")
 
         try:
             self.ble_client = client
