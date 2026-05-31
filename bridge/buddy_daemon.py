@@ -19,7 +19,7 @@ from typing import Optional
 from bleak import BleakScanner, BleakClient
 from bleak.exc import BleakError
 
-from ble_pairing import PairingManager
+from ble_pairing import PairingManager, clear_bluez_device
 
 # ── NUS UUIDs ─────────────────────────────────────────────────────────────────
 NUS_SERVICE   = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -172,6 +172,7 @@ class BuddyDaemon:
         self._deny_cnt    = 0
         self._pairing     = PairingManager()
         self._secure      = False  # True once bonded — reported in status ack
+        self._last_address: Optional[str] = None  # for stale-key self-heal
         self._restore_sessions()
 
     def _restore_sessions(self):
@@ -249,6 +250,14 @@ class BuddyDaemon:
         while True:
             try: await self._connect_and_run()
             except (BleakError, asyncio.TimeoutError, OSError) as e:
+                msg = repr(e)
+                # Self-heal stale-key churn even when it propagates here
+                if ("key-missing" in msg or "key_missing" in msg) and self._last_address:
+                    _log("DISCONNECT", "Stale BlueZ key — clearing device", logging.WARNING)
+                    await clear_bluez_device(self._last_address)
+                    self.ble_client = None
+                    await asyncio.sleep(2)
+                    continue
                 _log("DISCONNECT", f"BLE dropped ({e!r}) — retrying in 10 s", logging.WARNING)
                 self.ble_client = None
                 await asyncio.sleep(10)
@@ -261,6 +270,7 @@ class BuddyDaemon:
         )
         if device is None:
             _log("SCAN", "No Claude* device found — will retry", logging.WARNING); return
+        self._last_address = device.address
         _log("CONNECT", f"Found {BOLD}{device.name}{R}  {DIM}({device.address}){R}")
 
         # Connect IMMEDIATELY — the e-reader uses BLE privacy (rotating random
@@ -276,6 +286,15 @@ class BuddyDaemon:
                 break
             except (BleakError, asyncio.TimeoutError, OSError) as e:
                 msg = repr(e)
+                # Self-heal: a stale BlueZ key (peripheral's bond was cleared but
+                # BlueZ still holds a key) causes 'key-missing' churn. Drop the
+                # stale device entry so the next connect is clean & unencrypted.
+                if "key-missing" in msg or "key_missing" in msg:
+                    _log("SCAN", "Stale BlueZ key — clearing device, retrying clean", logging.WARNING)
+                    await clear_bluez_device(device.address)
+                    await asyncio.sleep(1)
+                    if attempt < 2:
+                        continue
                 if attempt < 2 and ("canceled" in msg or "cancelled" in msg or "discover services" in msg or "Unlikely" in msg):
                     _log("SCAN", f"Connect attempt {attempt+1} failed ({msg[:40]}…) — retrying", logging.WARNING)
                     await asyncio.sleep(1)
@@ -308,7 +327,7 @@ class BuddyDaemon:
             # session prompt matches its id, so the keepalive ignores any reply).
             await self._send_snapshot(prompt={"id": "wake", "tool": "✓ Connected",
                                               "hint": "Claude Buddy is linked"})
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(1.2)
             await self._send_snapshot()  # clear the wake card
             # Continuous keepalive reads keep the peripheral's radio awake so the
             # link stays up (flaky e-ink BLE drops idle connections). Runs the

@@ -76,6 +76,27 @@ def device_path(address: str, adapter: str = ADAPTER_PATH) -> str:
     return f"{adapter}/dev_" + address.upper().replace(":", "_")
 
 
+async def clear_bluez_device(address: str) -> bool:
+    """Remove a device from BlueZ (clears any stale bond/key) using a short-lived
+    bus connection. Used to self-heal 'br-connection-key-missing' churn where
+    BlueZ holds a dead key for a peripheral that no longer has a bond."""
+    bus = None
+    try:
+        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+        introspect = await bus.introspect(BLUEZ, ADAPTER_PATH)
+        obj = bus.get_proxy_object(BLUEZ, ADAPTER_PATH, introspect)
+        adapter = obj.get_interface("org.bluez.Adapter1")
+        await adapter.call_remove_device(device_path(address))
+        return True
+    except Exception as exc:
+        log.debug(f"clear_bluez_device note: {exc}")
+        return False
+    finally:
+        if bus:
+            try: bus.disconnect()
+            except Exception: pass
+
+
 class PairingManager:
     """Owns the system-bus connection, the agent, and pair/trust operations."""
 
