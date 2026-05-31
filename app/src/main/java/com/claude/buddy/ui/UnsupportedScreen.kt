@@ -9,14 +9,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.claude.buddy.ui.theme.ClaudeBlack
-import com.claude.buddy.ui.theme.ClaudeRed
-import com.claude.buddy.ui.theme.ClaudeTextSecondary
+import com.claude.buddy.ui.theme.LocalBuddyColors
 
 @Composable
 fun UnsupportedScreen(reason: String) {
+    val C = LocalBuddyColors.current
     Box(
-        modifier = Modifier.fillMaxSize().background(ClaudeBlack),
+        modifier = Modifier.fillMaxSize().background(C.background),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -27,19 +26,19 @@ fun UnsupportedScreen(reason: String) {
             Text(
                 text = "BLE Peripheral Not Supported",
                 style = MaterialTheme.typography.headlineLarge,
-                color = ClaudeRed,
+                color = C.red,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = reason,
                 style = MaterialTheme.typography.bodyLarge,
-                color = ClaudeTextSecondary,
+                color = C.textSecondary,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = "This device cannot act as a BLE peripheral.\nVerify using nRF Connect → Advertiser tab.",
                 style = MaterialTheme.typography.bodyLarge,
-                color = ClaudeTextSecondary,
+                color = C.textSecondary,
                 textAlign = TextAlign.Center,
             )
         }

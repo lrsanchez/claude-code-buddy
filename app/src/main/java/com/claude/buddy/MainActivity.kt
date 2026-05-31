@@ -51,10 +51,10 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            BuddyTheme {
-                val service = buddyService
+            val service = buddyService
+            val state = service?.stateManager?.state?.collectAsStateWithLifecycle()?.value ?: BuddyUiState()
+            BuddyTheme(isLightMode = state.isLightMode) {
                 if (service != null) {
-                    val state by service.stateManager.state.collectAsStateWithLifecycle()
                     BuddyScreen(
                         state = state,
                         onApprove = {
@@ -65,9 +65,10 @@ class MainActivity : ComponentActivity() {
                             val id = state.snapshot.prompt?.id ?: return@BuddyScreen
                             service.sendDecision(id, approve = false)
                         },
+                        onToggleTheme = { service.stateManager.toggleTheme() },
                     )
                 } else {
-                    BuddyScreen(state = BuddyUiState(), onApprove = {}, onDeny = {})
+                    BuddyScreen(state = state, onApprove = {}, onDeny = {})
                 }
             }
         }

@@ -34,15 +34,18 @@ data class BuddyUiState(
     val denyCount: Int = 0,
     // transient UI
     val pendingCelebrate: Boolean = false,
+    // persisted preference
+    val isLightMode: Boolean = false,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("buddy_stats")
 
-private val KEY_LEVEL = intPreferencesKey("level")
-private val KEY_APPR = intPreferencesKey("approve_count")
-private val KEY_DENY = intPreferencesKey("deny_count")
-private val KEY_OWNER = stringPreferencesKey("owner_name")
+private val KEY_LEVEL      = intPreferencesKey("level")
+private val KEY_APPR       = intPreferencesKey("approve_count")
+private val KEY_DENY       = intPreferencesKey("deny_count")
+private val KEY_OWNER      = stringPreferencesKey("owner_name")
 private val KEY_DEVICE_NAME = stringPreferencesKey("device_name")
+private val KEY_LIGHT_MODE = booleanPreferencesKey("light_mode")
 
 class BuddyStateManager(
     private val context: Context,
@@ -58,11 +61,12 @@ class BuddyStateManager(
             context.dataStore.data.first().let { prefs ->
                 _state.update {
                     it.copy(
-                        level = prefs[KEY_LEVEL] ?: 0,
+                        level       = prefs[KEY_LEVEL] ?: 0,
                         approveCount = prefs[KEY_APPR] ?: 0,
-                        denyCount = prefs[KEY_DENY] ?: 0,
-                        ownerName = prefs[KEY_OWNER] ?: "",
-                        deviceName = prefs[KEY_DEVICE_NAME] ?: "Clawd",
+                        denyCount   = prefs[KEY_DENY] ?: 0,
+                        ownerName   = prefs[KEY_OWNER] ?: "",
+                        deviceName  = prefs[KEY_DEVICE_NAME] ?: "Clawd",
+                        isLightMode = prefs[KEY_LIGHT_MODE] ?: false,
                     )
                 }
             }
@@ -113,6 +117,12 @@ class BuddyStateManager(
     fun onOwner(name: String) {
         scope.launch { context.dataStore.edit { it[KEY_OWNER] = name } }
         _state.update { it.copy(ownerName = name) }
+    }
+
+    fun toggleTheme() {
+        val next = !_state.value.isLightMode
+        scope.launch { context.dataStore.edit { it[KEY_LIGHT_MODE] = next } }
+        _state.update { it.copy(isLightMode = next) }
     }
 
     // Call immediately on button tap: dismiss card locally + suppress re-delivery of same prompt
