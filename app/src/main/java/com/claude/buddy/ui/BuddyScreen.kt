@@ -555,11 +555,17 @@ fun TokenMeter(
 
 @Composable
 fun ChatPanel(chat: List<ChatEntry>, C: BuddyColors = LocalBuddyColors.current, modifier: Modifier = Modifier) {
-    val reversed = remember(chat) { chat.reversed() }
+    // chat is newest-first from daemon — reverse so oldest→newest, latest at bottom
+    val displayed = remember(chat) { chat.reversed() }
     val listState = rememberLazyListState()
-    LaunchedEffect(reversed.size) { if (reversed.isNotEmpty()) listState.animateScrollToItem(reversed.size - 1) }
+    LaunchedEffect(displayed.size) {
+        if (displayed.isNotEmpty()) {
+            // scrollToItem is instant — no animation frame to cancel on rapid updates
+            listState.scrollToItem(displayed.size - 1)
+        }
+    }
     Column(modifier = modifier) {
-        if (reversed.isEmpty()) {
+        if (displayed.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     "Connected — start a Claude Code\nsession to see the conversation",
@@ -570,7 +576,7 @@ fun ChatPanel(chat: List<ChatEntry>, C: BuddyColors = LocalBuddyColors.current, 
             }
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                itemsIndexed(reversed, key = { index, _ -> index }) { _, entry ->
+                itemsIndexed(displayed, key = { _, entry -> entry.role + entry.text.take(40) }) { _, entry ->
                     ChatBubble(entry, C)
                 }
             }
