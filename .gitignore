@@ -12,11 +12,18 @@ local.properties
 # Gradle wrapper cache
 gradle/wrapper/gradle-wrapper.jar
 
-# Secrets (none yet, but just in case)
+# Secrets
 *.keystore
 *.jks
+*.crt
+*.key
+*.pem
+bridge/.env
 
 # Python
 __pycache__/
 *.pyc
 bridge/__pycache__/
+
+# Kotlin session files
+.kotlin/

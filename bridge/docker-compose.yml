@@ -1,0 +1,17 @@
+services:
+  voice:
+    build: .
+    ports:
+      - "3200:3200"
+    env_file:
+      - .env
+    volumes:
+      # Persist pairing tokens across restarts
+      - voice-tokens:/root/.local/share/claude-buddy
+      # Cache Whisper model so it isn't re-downloaded on every restart
+      - whisper-cache:/root/.cache
+    restart: unless-stopped
+
+volumes:
+  voice-tokens:
+  whisper-cache:

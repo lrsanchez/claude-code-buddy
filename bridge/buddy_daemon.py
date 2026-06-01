@@ -11,15 +11,23 @@ import asyncio
 import json
 import logging
 import os
+import random
+import secrets
+import signal
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
-from bleak import BleakScanner, BleakClient
-from bleak.exc import BleakError
+from voice_handler import VoiceHandler, VOICE_MODEL
 
-from ble_pairing import PairingManager, clear_bluez_device
+try:
+    from aiohttp import web as aweb
+    import aiohttp
+    HAS_HTTP = True
+except ImportError:
+    HAS_HTTP = False
 
 # ── NUS UUIDs ─────────────────────────────────────────────────────────────────
 NUS_SERVICE   = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -29,17 +37,28 @@ DECISION_CHAR = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"  # daemon polls here for 
 
 SOCKET_PATH    = "/tmp/claude-buddy.sock"
 SESSION_CACHE  = "/tmp/claude-buddy-sessions.json"
-HEARTBEAT_S    = 3
-KEEPALIVE_S    = 0.7  # continuous DECISION reads keep flaky peripheral radios awake
 SESSION_TTL    = 1800  # drop a session after 30 min with no hook activity
-BLE_CHUNK      = 20
-SCAN_TIMEOUT   = 30.0
-PROMPT_TIMEOUT = 120.0
-BUDDY_DECISION_TIMEOUT = 60.0  # wait this long for a tablet tap, then defer to CLI
-ENABLE_BONDING = os.environ.get("BUDDY_BONDING", "0") == "1"  # opt-in; off by default
+# How long to wait for a device tap before deferring to the CLI's own prompt.
+# Configurable via BUDDY_DECISION_TIMEOUT env var (default 30 s).
+BUDDY_DECISION_TIMEOUT = float(os.environ.get("BUDDY_DECISION_TIMEOUT", "30"))
 CHAT_POLL_S    = 1.0
 MAX_CHAT       = 25
 MAX_ENTRIES    = 15
+
+# ── HTTP / meter ──────────────────────────────────────────────────────────────
+HTTP_PORT         = int(os.environ.get("BUDDY_HTTP_PORT", "7700"))
+TOKEN_FILE        = os.path.expanduser("~/.local/share/claude-buddy/tokens.json")
+CREDENTIALS_PATHS = [
+    os.path.expanduser("~/.claude/.credentials.json"),
+    os.path.expanduser("~/.config/claude/.credentials.json"),
+]
+METER_POLL_S      = 60         # how often to hit the Anthropic API
+PAIRING_WINDOW_S  = 300        # 5-min validity for a pairing code
+PAIRING_MAX_TRIES = 5          # lock code after this many wrong attempts
+BUDDY_TOKEN       = os.environ.get("BUDDY_TOKEN", "")   # pre-shared; skips pairing if set
+CREATION_HTML     = os.path.join(os.path.dirname(__file__), "r1-meter.html")
+QR_HTML           = os.path.join(os.path.dirname(__file__), "r1-qr.html")
+VOICE_HTML        = os.path.join(os.path.dirname(__file__), "r1-voice.html")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 R="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
@@ -96,6 +115,15 @@ class Session:
     last_seen: float     = 0.0   # wall time of last hook activity (for TTL expiry)
     pending: Optional[PendingPrompt] = None
     active_prompt: Optional[dict] = None  # kept in every snapshot while waiting
+
+@dataclass
+class MeterCache:
+    s:  int   = -1    # session usage % (-1 = not yet known)
+    sr: int   = 0     # session reset in minutes
+    w:  int   = -1    # weekly usage %
+    wr: int   = 0     # weekly reset in minutes
+    st: str   = "error"
+    ts: float = 0.0
 
 # ── Transcript helpers ────────────────────────────────────────────────────────
 
@@ -160,22 +188,85 @@ def scan_chat(path: str, pos: int) -> tuple[list, int]:
     except (OSError, IOError): new_pos = pos
     return new_entries, new_pos
 
+# ── Token store (pairing + HTTP auth) ────────────────────────────────────────
+
+class TokenStore:
+    """Manages the pairing handshake and the set of issued bearer tokens."""
+
+    def __init__(self, path: str):
+        self._path = path
+        self._tokens: set[str] = set()
+        self._code: Optional[str] = None
+        self._code_expires: float = 0.0
+        self._code_attempts: int = 0
+        self._load()
+
+    def _load(self):
+        try:
+            with open(self._path) as f:
+                self._tokens = set(json.load(f).get("tokens", []))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def _save(self):
+        os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        with open(self._path, "w") as f:
+            json.dump({"tokens": list(self._tokens)}, f)
+
+    def open_window(self) -> str:
+        """Generate a new 6-digit pairing code and open the 5-minute window."""
+        self._code = f"{random.randint(0, 999_999):06d}"
+        self._code_expires = time.time() + PAIRING_WINDOW_S
+        self._code_attempts = 0
+        return self._code
+
+    @property
+    def window_open(self) -> bool:
+        return bool(self._code) and time.time() < self._code_expires
+
+    def try_pair(self, code: str) -> Optional[str]:
+        """Validate code → return a new bearer token, or None on failure.
+        The code is valid for multiple uses within its window so both the
+        meter and voice creations can pair with the same code."""
+        if not self._code or time.time() >= self._code_expires:
+            return None
+        self._code_attempts += 1
+        if self._code_attempts > PAIRING_MAX_TRIES:
+            self._code = None
+            return None
+        if code != self._code:
+            return None
+        token = secrets.token_hex(32)
+        self._tokens.add(token)
+        # Do NOT clear self._code — keep it valid until the window expires
+        # so the same code can pair multiple creations in one go.
+        self._save()
+        return token
+
+    def register(self, token: str):
+        """Pre-register a known token (e.g. from BUDDY_TOKEN env var)."""
+        self._tokens.add(token)
+        self._save()
+
+    def is_valid(self, token: str) -> bool:
+        return token in self._tokens
+
+
 # ── Daemon ────────────────────────────────────────────────────────────────────
 
 class BuddyDaemon:
     def __init__(self, verbose: bool = False):
         _setup(verbose)
         self._sessions: dict[str, Session] = {}
-        self._global_chat: list = []      # all sessions merged, newest first
-        self.ble_client: Optional[BleakClient] = None
-        self._rx_buf    = ""
-        self._send_lock = asyncio.Lock()
+        self._global_chat: list = []
         self._start_time  = time.time()
         self._approve_cnt = 0
         self._deny_cnt    = 0
-        self._pairing     = PairingManager()
-        self._secure      = False  # True once bonded — reported in status ack
-        self._last_address: Optional[str] = None  # for stale-key self-heal
+        self._token_store = TokenStore(TOKEN_FILE)
+        if BUDDY_TOKEN:
+            self._token_store.register(BUDDY_TOKEN)
+        self._meter_cache = MeterCache()
+        self._voice       = VoiceHandler()
         self._restore_sessions()
 
     def _restore_sessions(self):
@@ -285,211 +376,6 @@ class BuddyDaemon:
             "sessions": per_session,
         }
 
-    # ── BLE ───────────────────────────────────────────────────────────────────
-
-    async def ble_loop(self):
-        while True:
-            try: await self._connect_and_run()
-            except (BleakError, asyncio.TimeoutError, OSError) as e:
-                msg = repr(e)
-                # Self-heal stale-key churn even when it propagates here
-                if ("key-missing" in msg or "key_missing" in msg) and self._last_address:
-                    _log("DISCONNECT", "Stale BlueZ key — clearing device", logging.WARNING)
-                    await clear_bluez_device(self._last_address)
-                    self.ble_client = None
-                    await asyncio.sleep(2)
-                    continue
-                _log("DISCONNECT", f"BLE dropped ({e!r}) — retrying in 10 s", logging.WARNING)
-                self.ble_client = None
-                await asyncio.sleep(10)
-
-    async def _connect_and_run(self):
-        _log("SCAN", "Scanning for Claude Buddy…")
-        device = await BleakScanner.find_device_by_filter(
-            lambda d, _: bool(d.name and d.name.startswith("Claude")),
-            timeout=SCAN_TIMEOUT,
-        )
-        if device is None:
-            _log("SCAN", "No Claude* device found — will retry", logging.WARNING); return
-        self._last_address = device.address
-        _log("CONNECT", f"Found {BOLD}{device.name}{R}  {DIM}({device.address}){R}")
-
-        # Connect IMMEDIATELY — the e-reader uses BLE privacy (rotating random
-        # address). Any delay lets the address go stale → 'br-connection-canceled'.
-        # Retry the connect a few times on transient cancels (BlueZ flakiness).
-        # NOTE: some cheaper BLE peripherals (e-readers) take 20-40s to actually
-        # accept an incoming GATT connection. Use a generous 60s connect timeout.
-        client = None
-        for attempt in range(3):
-            try:
-                client = BleakClient(device, disconnected_callback=lambda _: self._on_disc(), timeout=90.0)
-                await client.connect()
-                break
-            except (BleakError, asyncio.TimeoutError, OSError) as e:
-                msg = repr(e)
-                # Self-heal: a stale BlueZ key (peripheral's bond was cleared but
-                # BlueZ still holds a key) causes 'key-missing' churn. Drop the
-                # stale device entry so the next connect is clean & unencrypted.
-                if "key-missing" in msg or "key_missing" in msg:
-                    _log("SCAN", "Stale BlueZ key — clearing device, retrying clean", logging.WARNING)
-                    await clear_bluez_device(device.address)
-                    await asyncio.sleep(1)
-                    if attempt < 2:
-                        continue
-                if attempt < 2 and ("canceled" in msg or "cancelled" in msg or "discover services" in msg or "Unlikely" in msg):
-                    _log("SCAN", f"Connect attempt {attempt+1} failed ({msg[:40]}…) — retrying", logging.WARNING)
-                    await asyncio.sleep(1)
-                    continue
-                raise
-        if client is None or not client.is_connected:
-            return
-
-        # Negotiate the real ATT MTU (~517) up front. Without this bleak reports
-        # the 23-byte default, so writes chunk at 20 bytes — a snapshot becomes
-        # hundreds of acked writes and takes minutes. Acquiring the MTU makes
-        # writes use ~514-byte chunks (25x fewer).
-        try:
-            await client._acquire_mtu()
-        except Exception as exc:
-            logging.getLogger("buddy").debug(f"_acquire_mtu note: {exc}")
-
-        try:
-            self.ble_client = client
-
-            # Bonding is OPT-IN (BUDDY_BONDING=1). It gives auto-reconnect on
-            # capable peripherals, but some devices (e.g. Boox e-readers) serve
-            # zero GATT services once bonded, so it's off by default.
-            if ENABLE_BONDING:
-                try:
-                    paired = await self._pairing.pair_and_trust(device.address)
-                    self._secure = bool(paired)
-                    if paired:
-                        _log("CONNECT", f"{GREEN}Bonded{R} + trusted {DIM}({device.address}){R}")
-                except Exception as exc:
-                    logging.getLogger("buddy").debug(f"pairing note: {exc}")
-
-            await client.start_notify(NUS_TX, self._on_notify)
-
-            _log("CONNECT", f"Connected — keepalive {KEEPALIVE_S}s · heartbeat {HEARTBEAT_S}s")
-            # Flash a brief "✓ Connected" card on the tablet as a handshake: it
-            # wakes the radio and gives clear visual confirmation the link is
-            # live. Auto-clears after ~2.5s; taps on it are harmless (no pending
-            # session prompt matches its id, so the keepalive ignores any reply).
-            await self._send_snapshot(prompt={"id": "wake", "tool": "✓ Connected",
-                                              "hint": "Claude Buddy is linked"})
-            await asyncio.sleep(1.2)
-            await self._send_snapshot()  # clear the wake card
-            # Continuous keepalive reads keep the peripheral's radio awake so the
-            # link stays up (flaky e-ink BLE drops idle connections). Runs the
-            # whole session, also picking up Approve/Deny decisions immediately.
-            keepalive = asyncio.create_task(self._keepalive_loop(client))
-            try:
-                while client.is_connected:
-                    await asyncio.sleep(HEARTBEAT_S)
-                    await self._send_snapshot()
-            finally:
-                keepalive.cancel()
-        finally:
-            try: await client.disconnect()
-            except Exception: pass
-            self.ble_client = None
-
-    async def _keepalive_loop(self, client):
-        """Read the DECISION characteristic on a tight interval. Two purposes:
-        (1) continuous GATT traffic keeps a dozing peripheral radio awake so the
-        connection doesn't drop while idle; (2) picks up Approve/Deny decisions."""
-        while True:
-            try:
-                if not client.is_connected:
-                    return
-                data = await client.read_gatt_char(DECISION_CHAR)
-                text = data.decode("utf-8", errors="replace").strip()
-                if text:
-                    msg = json.loads(text)
-                    pid = msg.get("id")
-                    for s in self._sessions.values():
-                        if s.pending and s.pending.id == pid and not s.pending.future.done():
-                            s.pending.future.set_result(msg.get("decision", "deny"))
-                            break
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
-                logging.getLogger("buddy").debug(f"keepalive read: {e}")
-            await asyncio.sleep(KEEPALIVE_S)
-
-    def _on_disc(self):
-        _log("DISCONNECT", "BLE disconnected"); self.ble_client = None
-
-    def _on_notify(self, _s, data: bytearray):
-        self._rx_buf += data.decode("utf-8", errors="replace")
-        while "\n" in self._rx_buf:
-            line, self._rx_buf = self._rx_buf.split("\n", 1)
-            line = line.strip()
-            if line: asyncio.create_task(self._handle_rx(line))
-
-    async def _handle_rx(self, line: str):
-        logging.getLogger("buddy").debug(f"RX: {line}")
-        try: msg = json.loads(line)
-        except: return
-        cmd = msg.get("cmd")
-        if cmd == "permission":
-            pid, dec = msg.get("id",""), msg.get("decision","deny")
-            for s in self._sessions.values():
-                if s.pending and s.pending.id == pid and not s.pending.future.done():
-                    s.pending.future.set_result(dec); break
-        elif cmd == "status":
-            await self._send_line(self._status_ack())
-        elif cmd in ("name","owner","unpair"):
-            await self._send_line(json.dumps({"ack": cmd, "ok": True}))
-
-    async def _send_snapshot(self, prompt: Optional[dict] = None):
-        if not self.ble_client or not self.ble_client.is_connected: return
-        for s in self._sessions.values():
-            if s.transcript_path: refresh_entries(s)
-        snap = self._aggregate()
-        # Use explicitly passed prompt, or the stored active_prompt from any waiting session
-        active = prompt or next(
-            (s.active_prompt for s in self._sessions.values() if s.active_prompt), None
-        )
-        if active: snap["prompt"] = active
-        await self._send_line(json.dumps(snap))
-
-    async def _send_line(self, line: str):
-        # Capture the client locally — the disconnect callback can null
-        # self.ble_client mid-write (across an await), which would crash.
-        client = self.ble_client
-        if not client or not client.is_connected: return
-        data = (line + "\n").encode("utf-8")
-        # Use the negotiated MTU (often 517) instead of the 23-byte default so a
-        # snapshot goes in 1-3 writes, not 30-100. Tiny acked writes on a slow
-        # peripheral take seconds and the link drops mid-barrage — this fixes that.
-        try:
-            chunk = max((client.mtu_size or 23) - 3, 20)
-        except Exception:
-            chunk = BLE_CHUNK
-        async with self._send_lock:
-            for i in range(0, len(data), chunk):
-                c = self.ble_client
-                if not c or not c.is_connected:
-                    break
-                try:
-                    await c.write_gatt_char(NUS_RX, data[i:i+chunk], response=True)
-                except Exception as e:  # disconnect mid-write must never crash the daemon
-                    logging.getLogger("buddy").debug(f"write dropped: {e}")
-                    break
-
-    def _status_ack(self) -> str:
-        import resource
-        return json.dumps({
-            "ack":"status","ok":True,"data":{
-                "name":"Claude CLI","sec":self._secure,
-                "sys":{"up":int(time.time()-self._start_time),
-                       "heap":resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*1024},
-                "stats":{"appr":self._approve_cnt,"deny":self._deny_cnt,
-                         "lvl": sum(s.tokens for s in self._sessions.values())//50_000},
-            },
-        })
-
     # ── Chat follow ───────────────────────────────────────────────────────────
 
     async def chat_follow_loop(self):
@@ -519,7 +405,6 @@ class BuddyDaemon:
                     self._global_chat = self._global_chat[:MAX_CHAT]
                 except Exception as exc:
                     logging.getLogger("buddy").debug(f"chat_follow [{session.short_id}]: {exc}")
-            if changed: await self._send_snapshot()
 
     # ── Socket server ─────────────────────────────────────────────────────────
 
@@ -554,14 +439,12 @@ class BuddyDaemon:
             s.session_start_tokens = s.tokens
             s.tokens_today = 0
         s.running = True   # Claude will respond to session start
-        await self._send_snapshot()
 
     async def _user_submit(self, msg: dict):
         sid = msg.get("session_id","unknown")
         s   = self._get_session(sid, msg.get("transcript_path",""))
         s.running = True   # User sent a message, Claude is now generating
         _log("SUBMIT", f"Session {BOLD}{s.short_id}{R} — generating response")
-        await self._send_snapshot()
 
     async def _pre_tool(self, msg: dict) -> dict:
         sid  = msg.get("session_id","unknown")
@@ -570,12 +453,6 @@ class BuddyDaemon:
         hint = str(inp.get("command") or inp.get("file_path") or
                    inp.get("description") or inp.get("prompt") or "")[:100].replace("\n"," ")
         s = self._get_session(sid, msg.get("transcript_path",""))
-
-        # The buddy is an ENHANCEMENT, not a hard gate. If the tablet isn't
-        # connected, defer immediately so Claude Code's own permission flow
-        # handles it — never block the CLI on an unreachable device.
-        if not self.ble_client or not self.ble_client.is_connected:
-            return {"defer": True}
 
         s.running = True
         s.waiting = True
@@ -591,7 +468,6 @@ class BuddyDaemon:
         tag = f" {DIM}[{s.short_id}]{R}" if multi else ""
         hint_short = hint[:60] + ("…" if len(hint)>60 else "")
         _log("WAIT", f"{BOLD}{tool}{R}{tag}  {DIM}{hint_short}{R}")
-        await self._send_snapshot(prompt=prompt)
 
         # The always-on keepalive loop polls DECISION and resolves this future.
         # On timeout, DEFER (not deny) so the CLI's normal flow takes over —
@@ -609,7 +485,6 @@ class BuddyDaemon:
 
         s.waiting = False
         s.running = True
-        await self._send_snapshot()
 
         if deferred:
             return {"defer": True}
@@ -629,7 +504,6 @@ class BuddyDaemon:
         s   = self._get_session(sid, msg.get("transcript_path",""))
         s.waiting = False
         s.running = True  # Claude is processing the tool result, still running
-        await self._send_snapshot()
 
     async def _notification(self, msg: dict):
         text = msg.get("message","")
@@ -638,28 +512,460 @@ class BuddyDaemon:
             sid = msg.get("session_id","")
             s = self._sessions.get(sid)
             if s: s.entries = [f"{ts} ◈ {text[:60]}"] + s.entries[:MAX_ENTRIES-1]
-        await self._send_snapshot()
 
     async def _stop(self, msg: dict):
         sid = msg.get("session_id","unknown")
         s   = self._get_session(sid, msg.get("transcript_path",""))
         s.running = False  # Claude finished this turn
         s.waiting = False
-        await self._send_snapshot()
+
+    # ── Meter poller ──────────────────────────────────────────────────────────
+
+    def _read_claude_token(self) -> Optional[str]:
+        """Read the Claude Code OAuth access token from disk."""
+        for path in CREDENTIALS_PATHS:
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                # Format: {"claudeAiOauth": {"accessToken": "..."}}  (current)
+                if "claudeAiOauth" in data:
+                    return data["claudeAiOauth"].get("accessToken")
+                # Format: {"claudeAiOauthTokens": {"accessToken": "..."}}  (older)
+                if "claudeAiOauthTokens" in data:
+                    return data["claudeAiOauthTokens"].get("accessToken")
+                # Format: {"accessToken": "..."}
+                if "accessToken" in data:
+                    return data["accessToken"]
+                # Try nested keys
+                for key in ("oauth", "credentials", "token"):
+                    sub = data.get(key)
+                    if isinstance(sub, dict):
+                        t = sub.get("accessToken") or sub.get("access_token")
+                        if t:
+                            return t
+                _log("ERROR", f"Unknown credentials format, keys: {list(data.keys())}", logging.WARNING)
+            except (OSError, json.JSONDecodeError) as e:
+                logging.getLogger("buddy").debug(f"credentials read ({path}): {e}")
+        return None
+
+    def _parse_meter_headers(self, headers: dict):
+        """Parse Anthropic unified rate-limit headers into the meter cache.
+
+        Actual header names (confirmed empirically):
+          anthropic-ratelimit-unified-5h-utilization   float 0.0-1.0
+          anthropic-ratelimit-unified-5h-reset         epoch seconds
+          anthropic-ratelimit-unified-7d-utilization   float 0.0-1.0
+          anthropic-ratelimit-unified-7d-reset         epoch seconds
+        """
+        h = {k.lower(): v for k, v in headers.items()}
+        c = self._meter_cache
+
+        def utilization_pct(key: str) -> Optional[int]:
+            val = h.get(key)
+            if val is None:
+                return None
+            try:
+                return min(100, max(0, round(float(val) * 100)))
+            except ValueError:
+                return None
+
+        def mins_until_epoch(key: str) -> Optional[int]:
+            val = h.get(key)
+            if val is None:
+                return None
+            try:
+                delta = int(float(val)) - time.time()
+                return max(0, int(delta / 60))
+            except ValueError:
+                return None
+
+        s  = utilization_pct("anthropic-ratelimit-unified-5h-utilization")
+        sr = mins_until_epoch("anthropic-ratelimit-unified-5h-reset")
+        w  = utilization_pct("anthropic-ratelimit-unified-7d-utilization")
+        wr = mins_until_epoch("anthropic-ratelimit-unified-7d-reset")
+
+        if s  is not None: c.s  = s
+        if sr is not None: c.sr = sr
+        if w  is not None: c.w  = w
+        if wr is not None: c.wr = wr
+
+    async def _poll_meter(self):
+        access_token = self._read_claude_token()
+        if not access_token:
+            self._meter_cache.st = "error"
+            return
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "Authorization":    f"Bearer {access_token}",
+                        "anthropic-version": "2023-06-01",
+                        "content-type":     "application/json",
+                        "x-app-name":       "claude-code",
+                    },
+                    json={
+                        "model":    "claude-haiku-4-5-20251001",
+                        "max_tokens": 1,
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as resp:
+                    hdrs = dict(resp.headers)
+                    # On first successful poll, log all limit/usage headers so we
+                    # can identify the right field names empirically.
+                    if self._meter_cache.ts == 0.0:
+                        interesting = {k: v for k, v in hdrs.items()
+                                       if any(w in k.lower() for w in
+                                              ("limit","remaining","reset","quota","usage","rate"))}
+                        _log("INFO", f"Rate headers discovered: {interesting}")
+                    self._parse_meter_headers(hdrs)
+                    self._meter_cache.st = "ok"
+                    self._meter_cache.ts = time.time()
+        except Exception as e:
+            _log("ERROR", f"meter poll failed: {e}", logging.WARNING)
+            if self._meter_cache.st == "ok":
+                self._meter_cache.st = "stale"
+
+    async def meter_poll_loop(self):
+        while True:
+            await self._poll_meter()
+            await asyncio.sleep(METER_POLL_S)
+
+    # ── HTTP server ───────────────────────────────────────────────────────────
+
+    async def _require_auth(self, request) -> Optional[str]:
+        """Return bearer token if valid, else raise HTTP 401/403."""
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            raise aweb.HTTPUnauthorized(reason="Bearer token required")
+        token = auth[7:].strip()
+        if not self._token_store.is_valid(token):
+            raise aweb.HTTPForbidden(reason="Invalid token")
+        return token
+
+    async def _serve_file(self, path: str) -> aweb.Response:
+        try:
+            with open(path, "rb") as f:
+                return aweb.Response(body=f.read(), content_type="text/html")
+        except OSError:
+            return aweb.Response(text=f"file not found: {path}", status=404)
+
+    async def _route_creation(self, request):
+        return await self._serve_file(CREATION_HTML)
+
+    def _make_qr_svg(self, url: str) -> str:
+        """Generate a QR code SVG string for url. Returns an error snippet on failure."""
+        try:
+            import io, re, qrcode
+            from qrcode.image.svg import SvgPathImage
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=10, border=3,
+                image_factory=SvgPathImage,
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+            buf = io.BytesIO()
+            qr.make_image().save(buf)
+            svg = buf.getvalue().decode("utf-8")
+            # Strip XML declaration; fix to a fixed display size
+            svg = svg.replace("<?xml version='1.0' encoding='UTF-8'?>", "").strip()
+            svg = re.sub(r'width="[^"]+" height="[^"]+"', 'width="220" height="220"', svg)
+            return svg
+        except ImportError:
+            return '<text fill="#ff5a1f" font-family="monospace" font-size="12" x="10" y="30">pip install qrcode</text>'
+        except Exception as e:
+            return f'<text fill="#ff5a1f" font-family="monospace" font-size="12" x="10" y="30">QR error: {e}</text>'
+
+    async def _route_test(self, request):
+        """Minimal diagnostic page — confirms the WebView can load JS at all."""
+        html = ("<!DOCTYPE html><html><head>"
+                "<meta charset='UTF-8'>"
+                "<meta name='viewport' content='width=240,initial-scale=1,user-scalable=no'>"
+                "</head><body style='background:#000;color:#0f0;padding:12px;"
+                "font-family:monospace;font-size:11px;width:240px;height:282px;overflow:hidden'>"
+                "<div id='o'>loading…</div>"
+                "<canvas id='c' width='84' height='84' style='display:block;margin:8px 0'></canvas>"
+                "<script>"
+                "try{"
+                "  var o=document.getElementById('o');"
+                "  o.textContent='JS OK';"
+                "  var c=document.getElementById('c').getContext('2d');"
+                "  c.strokeStyle='#46d6cf';c.lineWidth=8;"
+                "  c.beginPath();c.arc(42,42,34,-Math.PI/2,Math.PI);c.stroke();"
+                "  o.textContent='JS+canvas OK\\n'+navigator.userAgent.slice(0,60);"
+                "}catch(e){document.body.textContent='err:'+e;}"
+                "</script></body></html>")
+        return aweb.Response(text=html, content_type="text/html")
+
+    async def _route_qr(self, request):
+        # Detect scheme — Tailscale Funnel injects X-Forwarded-Proto: https
+        proto = request.headers.get("X-Forwarded-Proto", "http")
+        host  = (request.headers.get("X-Forwarded-Host")
+                 or request.headers.get("Host")
+                 or f"localhost:{HTTP_PORT}")
+        creation_url = f"{proto}://{host}/"
+        # R1 expects a JSON payload in the QR, not a bare URL
+        payload = json.dumps({
+            "title":       "Claude Buddy",
+            "url":         creation_url + "?ngrok-skip-browser-warning=1&v=3",
+            "description": "Live Claude Code session monitor + approvals",
+            "themeColor":  "#ff5a1f",
+        }, separators=(",", ":"))
+        svg = self._make_qr_svg(payload)
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>r1 · install creation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{{--bg:#070708;--screen:#0a0a0c;--ink:#f4f2ee;--dim:#6e6c66;--line:#1c1b19;--orange:#ff5a1f;--amber:#ffb347;--teal:#46d6cf}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:radial-gradient(900px 400px at 70% -10%,#13110e 0,transparent 60%),var(--bg);color:var(--ink);font-family:"DM Mono",ui-monospace,monospace;min-height:100vh;display:flex;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}}
+.card{{display:flex;flex-direction:column;align-items:center;gap:28px;padding:48px 40px 44px;background:var(--screen);border:1px solid var(--line);border-radius:24px;box-shadow:0 40px 80px -30px #000;max-width:420px;width:100%}}
+.kick{{font-size:10px;letter-spacing:.42em;text-transform:uppercase;color:var(--orange);font-weight:500}}
+.title{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;letter-spacing:-.02em;margin-top:10px}}
+.title em{{font-style:normal;color:var(--dim)}}
+.sub{{font-size:10.5px;color:var(--dim);margin-top:10px;line-height:1.7;letter-spacing:.03em;text-align:center}}
+.sub b{{color:var(--ink);font-weight:500}}
+.qr-frame{{background:#fff;border-radius:16px;padding:16px;display:flex;align-items:center;justify-content:center}}
+.url-box{{width:100%;background:#0d0d0f;border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:11px;color:var(--teal);letter-spacing:.02em;word-break:break-all;text-align:center}}
+.divider{{width:100%;height:1px;background:var(--line)}}
+.steps{{width:100%;display:flex;flex-direction:column;gap:10px}}
+.step{{display:flex;gap:12px;align-items:flex-start;font-size:10.5px;color:var(--dim);letter-spacing:.02em;line-height:1.55}}
+.step .n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:13px;color:var(--orange);flex-shrink:0;line-height:1.35}}
+.step b{{color:var(--ink);font-weight:500}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div style="text-align:center">
+    <div class="kick">rabbit r1 · creation</div>
+    <div class="title">install <em>/ usage meter</em></div>
+    <div class="sub">scan with your r1 to install.<br>must be accessed via your <b>Tailscale URL</b> for the QR to encode the right address.</div>
+  </div>
+  <div class="qr-frame">{svg}</div>
+  <div class="url-box">{payload}</div>
+  <div class="divider"></div>
+  <div class="steps">
+    <div class="step"><span class="n">1</span><span>Run <b>tailscale funnel 7700</b>, then open this page via your Tailscale URL — not localhost.</span></div>
+    <div class="step"><span class="n">2</span><span>On the r1: <b>Settings → Creations → Install</b> and scan the QR above.</span></div>
+    <div class="step"><span class="n">3</span><span>First launch shows the <b>pair</b> screen — enter the 6-digit code from the daemon logs using the scroll wheel.</span></div>
+  </div>
+</div>
+</body>
+</html>"""
+        return aweb.Response(text=html, content_type="text/html")
+
+    async def _route_auto_token(self, request):
+        """Return the pre-shared BUDDY_TOKEN so creations can self-pair silently.
+        Only useful when BUDDY_TOKEN is set in .env — returns 404 otherwise.
+        Unprotected by design: it's behind Tailscale so only the owner can reach it."""
+        if not BUDDY_TOKEN:
+            return aweb.Response(status=404)
+        return aweb.json_response({"token": BUDDY_TOKEN})
+
+    async def _route_pair(self, request):
+        try:
+            data = await request.json()
+        except Exception:
+            return aweb.Response(text="bad json", status=400)
+        code = str(data.get("code", "")).strip()
+        token = self._token_store.try_pair(code)
+        if token is None:
+            return aweb.json_response({"ok": False, "error": "invalid code or window closed"}, status=403)
+        _log("CONNECT", f"R1 paired successfully — token issued")
+        return aweb.json_response({"ok": True, "token": token})
+
+    async def _route_meter(self, request):
+        await self._require_auth(request)
+        c = self._meter_cache
+        return aweb.json_response({
+            "s":  c.s,
+            "sr": c.sr,
+            "w":  c.w,
+            "wr": c.wr,
+            "st": c.st,
+            "ts": int(c.ts),
+        })
+
+
+    async def _route_status(self, request):
+        """Full session snapshot + meter — polled by the Android app every 3 s."""
+        await self._require_auth(request)
+        snap = self._aggregate()
+        active = next((s.active_prompt for s in self._sessions.values() if s.active_prompt), None)
+        if active:
+            snap["prompt"] = active
+        c = self._meter_cache
+        snap.update({"s": c.s, "sr": c.sr, "w": c.w, "wr": c.wr})
+        return aweb.json_response(snap)
+
+    async def _route_decision(self, request):
+        """Receive Approve/Deny from any HTTP client (Android app, R1, browser)."""
+        await self._require_auth(request)
+        try:
+            data = await request.json()
+        except Exception:
+            return aweb.json_response({"ok": False, "error": "bad json"}, status=400)
+        pid = data.get("id", "")
+        dec = data.get("decision", "deny")
+        for s in self._sessions.values():
+            if s.pending and s.pending.id == pid and not s.pending.future.done():
+                s.pending.future.set_result(dec)
+                icon = "APPROVE" if dec == "once" else "DENY"
+                _log(icon, f"HTTP decision: {dec} [{pid[:16]}]")
+                if dec == "once":
+                    self._approve_cnt += 1
+                else:
+                    self._deny_cnt += 1
+                return aweb.json_response({"ok": True})
+        return aweb.json_response({"ok": False, "error": "prompt not found"}, status=404)
+
+    # ── Voice routes ──────────────────────────────────────────────────────────
+
+    async def _route_voice(self, request):
+        return await self._serve_file(VOICE_HTML)
+
+    async def _route_voice_qr(self, request):
+        proto = request.headers.get("X-Forwarded-Proto", "http")
+        host  = (request.headers.get("X-Forwarded-Host")
+                 or request.headers.get("Host")
+                 or f"localhost:{HTTP_PORT}")
+        creation_url = f"{proto}://{host}/voice"
+        payload = json.dumps({
+            "title":       "Claude Buddy Voice",
+            "url":         creation_url + "?ngrok-skip-browser-warning=1&v=1",
+            "description": "Push-to-talk voice assistant via OpenRouter",
+            "themeColor":  "#ff5a1f",
+        }, separators=(",", ":"))
+        svg  = self._make_qr_svg(payload)
+        html = f"""<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>r1 voice · install</title>
+<style>
+body{{background:#070708;color:#f4f2ee;font-family:ui-monospace,monospace;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;
+  -webkit-font-smoothing:antialiased}}
+.card{{display:flex;flex-direction:column;align-items:center;gap:20px;
+  padding:40px;background:#0a0a0c;border:1px solid #1c1b19;border-radius:20px;
+  box-shadow:0 30px 60px -20px #000;max-width:360px;width:100%}}
+.kick{{font-size:10px;letter-spacing:.4em;text-transform:uppercase;color:#ff5a1f}}
+.title{{font-size:22px;font-weight:800;letter-spacing:-.02em;margin-top:6px}}
+.title em{{font-style:normal;color:#6e6c66}}
+.qr{{background:#fff;border-radius:12px;padding:14px;display:flex}}
+.url{{background:#0d0d0f;border:1px solid #1c1b19;border-radius:8px;
+  padding:8px 12px;font-size:10px;color:#46d6cf;word-break:break-all;text-align:center;width:100%}}
+.note{{font-size:9px;color:#6e6c66;text-align:center;line-height:1.6}}
+.note b{{color:#f4f2ee;font-weight:normal}}
+</style></head><body>
+<div class="card">
+  <div style="text-align:center">
+    <div class="kick">rabbit r1 · creation</div>
+    <div class="title">voice <em>/ openrouter</em></div>
+  </div>
+  <div class="qr">{svg}</div>
+  <div class="url">{creation_url}</div>
+  <div class="note">
+    Open this page via your <b>Tailscale URL</b> so the QR encodes the right address.<br>
+    Delete the old voice creation first, then scan.<br>
+    A new pairing code is shown in the daemon logs (SIGUSR1 to refresh).
+  </div>
+</div></body></html>"""
+        return aweb.Response(text=html, content_type="text/html")
+
+    async def _route_ask(self, request):
+        await self._require_auth(request)
+        result = await self._voice.handle_ask(request)
+        return aweb.json_response(result)
+
+    async def http_loop(self):
+        if not HAS_HTTP:
+            _log("ERROR", "aiohttp not installed — HTTP server disabled. Run: pip install aiohttp", logging.WARNING)
+            return
+
+        @aweb.middleware
+        async def _ngrok_headers(request, handler):
+            resp = await handler(request)
+            resp.headers["ngrok-skip-browser-warning"] = "1"
+            return resp
+
+        app = aweb.Application(middlewares=[_ngrok_headers])
+        app.router.add_get( "/",           self._route_creation)
+        app.router.add_get( "/qr",         self._route_qr)
+        app.router.add_get( "/test",       self._route_test)
+        app.router.add_get( "/auto-token", self._route_auto_token)
+        app.router.add_post("/pair",       self._route_pair)
+        app.router.add_get( "/meter",      self._route_meter)
+        app.router.add_get( "/status",     self._route_status)
+        app.router.add_post("/decision",   self._route_decision)
+        # Voice creation
+        app.router.add_get( "/voice",    self._route_voice)
+        app.router.add_get( "/voice/qr", self._route_voice_qr)
+        app.router.add_post("/ask",      self._route_ask)
+
+        # Open pairing window on startup and log the code
+        code = self._token_store.open_window()
+        _log("INFO",    f"Meter:     http://localhost:{HTTP_PORT}/     qr → /qr")
+        _log("INFO",    f"Voice:     http://localhost:{HTTP_PORT}/voice  qr → /voice/qr")
+        if not VOICE_MODEL or "OPENROUTER_KEY" not in os.environ:
+            _log("INFO", f"Voice LLM: set OPENROUTER_KEY env var to enable")
+        # Pre-load Whisper in background so it's ready on first /ask
+        asyncio.get_event_loop().run_in_executor(None, self._voice.load_whisper)
+
+        loop = asyncio.get_event_loop()
+
+        def _print_pair_code(c: str):
+            bar = f"{BOLD}{CYAN}{'─' * 38}{R}"
+            print(f"\n{bar}")
+            print(f"  {BOLD}{CYAN}PAIRING CODE →  {GREEN}{c}{R}  {CYAN}(valid {PAIRING_WINDOW_S//60}m){R}")
+            print(f"  {DIM}SIGUSR1 to get a new code · pairs meter + voice{R}")
+            print(f"{bar}\n", flush=True)
+
+        _print_pair_code(code)
+
+        # Re-print every 30 s while the window is still open so it doesn't scroll away
+        async def _pair_code_reminder():
+            while True:
+                await asyncio.sleep(30)
+                if self._token_store.window_open:
+                    _print_pair_code(self._token_store._code)
+
+        asyncio.create_task(_pair_code_reminder())
+
+        # SIGUSR1 opens a fresh pairing window without restarting
+        def _reopen_pair():
+            new_code = self._token_store.open_window()
+            _print_pair_code(new_code)
+        loop.add_signal_handler(signal.SIGUSR1, _reopen_pair)
+
+        runner = aweb.AppRunner(app)
+        await runner.setup()
+        site = aweb.TCPSite(runner, "0.0.0.0", HTTP_PORT)
+        await site.start()
+        while True:
+            await asyncio.sleep(3600)
 
     # ── Main ──────────────────────────────────────────────────────────────────
 
     async def run(self):
-        print(f"\n{BOLD}Claude Buddy{R}  {DIM}BLE ↔ CLI bridge{R}\n"
+        print(f"\n{BOLD}Claude Buddy{R}  {DIM}HTTP + hooks bridge{R}\n"
               f"  Socket  {DIM}{SOCKET_PATH}{R}\n"
               f"  Tip     supports multiple simultaneous Claude Code sessions\n")
-        # Register the Just Works pairing agent only when bonding is enabled
-        if ENABLE_BONDING:
-            if await self._pairing.setup():
-                _log("CONNECT", f"{DIM}Pairing agent ready (Just Works){R}")
-            else:
-                _log("ERROR", "Pairing agent unavailable — bonding may prompt", logging.WARNING)
-        await asyncio.gather(self.ble_loop(), self.socket_loop(), self.chat_follow_loop())
+        await asyncio.gather(
+            self.socket_loop(),
+            self.chat_follow_loop(),
+            self.http_loop(),
+            self.meter_poll_loop(),
+        )
 
 
 if __name__ == "__main__":

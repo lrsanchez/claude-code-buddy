@@ -1,9 +1,6 @@
 package com.claude.buddy.service
 
-import android.annotation.SuppressLint
 import android.app.*
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
@@ -11,15 +8,16 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.claude.buddy.MainActivity
 import com.claude.buddy.R
-import com.claude.buddy.ble.*
-import com.claude.buddy.protocol.ProtocolHandler
+import com.claude.buddy.net.BuddyHttpClient
 import com.claude.buddy.state.BuddyStateManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 
-private const val TAG = "BuddyService"
+private const val TAG        = "BuddyService"
 private const val CHANNEL_ID = "buddy_service"
-private const val NOTIF_ID = 1
-private const val DEAD_LINK_MS = 300_000L // 5 min — true disconnects fire onDeviceDisconnected immediately
+private const val NOTIF_ID   = 1
+private const val POLL_MS    = 3_000L
+private const val DEAD_MS    = 15_000L   // mark disconnected after this many ms without a good response
 
 class BuddyService : Service() {
 
@@ -32,97 +30,14 @@ class BuddyService : Service() {
     lateinit var stateManager: BuddyStateManager
         private set
 
-    private lateinit var advertiser: NusAdvertiser
-    private lateinit var gattServer: NusGattServer
-    private lateinit var protocol: ProtocolHandler
-
-    private var deadLinkJob: Job? = null
+    private var pollJob: Job? = null
+    private var lastSuccessMs = 0L
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
-
         stateManager = BuddyStateManager(applicationContext, scope)
-
-        advertiser = NusAdvertiser(this)
-        gattServer = NusGattServer(this, scope, object : GattServerListener {
-            override fun onLineReceived(device: BluetoothDevice, line: String) {
-                resetDeadLinkTimer()
-                // If onConnectionStateChange didn't fire reliably, receiving
-                // any data is enough proof the link is alive
-                if (!stateManager.state.value.isConnected) {
-                    stateManager.onConnected()
-                    advertiser.stop()
-                }
-                protocol.handleLine(line)
-            }
-            override fun onDeviceConnected(device: BluetoothDevice) {
-                Log.i(TAG, "Device connected: ${device.address}")
-                stateManager.onConnected()
-                resetDeadLinkTimer()
-                // Stop advertising while a central is connected
-                advertiser.stop()
-            }
-            override fun onDeviceDisconnected(device: BluetoothDevice) {
-                Log.i(TAG, "Device disconnected: ${device.address}")
-                stateManager.onDisconnected()
-                deadLinkJob?.cancel()
-                // Resume advertising so the desktop can reconnect
-                startAdvertising()
-            }
-        })
-
-        protocol = ProtocolHandler(
-            onSnapshot = { stateManager.onSnapshot(it) },
-            onTurn = { /* future: log or store last turn */ },
-            onTimeSync = { epoch, tz -> stateManager.onTimeSync(epoch, tz) },
-            onOwner = { stateManager.onOwner(it) },
-            buildStatusAck = { stateManager.buildStatusAck() },
-            sendLine = { gattServer.send(it) },
-        )
-
-        val cap = advertiser.checkCapability()
-        if (!cap.supported) {
-            Log.e(TAG, "BLE peripheral not supported: ${cap.reason}")
-            stateManager.onDisconnected() // stays in SLEEP with error visible
-            return
-        }
-
-        gattServer.start()
-        startAdvertising()
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startAdvertising() {
-        val btManager = getSystemService(BluetoothManager::class.java)
-        val adapter = btManager?.adapter ?: return
-        val name = NusAdvertiser.buildDeviceName(adapter)
-        advertiser.start(name)
-    }
-
-    private fun resetDeadLinkTimer() {
-        deadLinkJob?.cancel()
-        deadLinkJob = scope.launch {
-            delay(DEAD_LINK_MS)
-            Log.w(TAG, "Dead-link timeout — treating as disconnected")
-            stateManager.onDeadLink()
-            startAdvertising()
-        }
-    }
-
-    fun sendDecision(id: String, approve: Boolean) {
-        val json = """{"id":"$id","decision":"${if (approve) "once" else "deny"}"}"""
-        gattServer.setDecision(json)
-        gattServer.send(protocol.buildPermissionDecision(id, approve))
-        if (approve) stateManager.onApprove() else stateManager.onDeny()
-        stateManager.onDecisionMade(id)
-    }
-
-    fun reconnect() {
-        advertiser.stop()
-        startAdvertising()
-        stateManager.onSearching() // show "searching" while daemon re-discovers
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
@@ -130,12 +45,60 @@ class BuddyService : Service() {
     override fun onBind(intent: Intent): IBinder = LocalBinder()
 
     override fun onDestroy() {
-        deadLinkJob?.cancel()
-        advertiser.stop()
-        gattServer.stop()
+        pollJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }
+
+    // ── Polling ───────────────────────────────────────────────────────────────
+
+    fun startPolling() {
+        pollJob?.cancel()
+        pollJob = scope.launch { pollLoop() }
+    }
+
+    private suspend fun pollLoop() {
+        stateManager.onSearching()
+        while (true) {
+            val st = stateManager.state.value
+            if (!st.isConfigured) {
+                delay(POLL_MS)
+                continue
+            }
+            val client = BuddyHttpClient(st.daemonUrl, st.daemonToken)
+            val snapshot = client.fetchStatus()
+            if (snapshot != null) {
+                lastSuccessMs = System.currentTimeMillis()
+                stateManager.onSnapshot(snapshot)
+            } else {
+                val sinceSuccess = System.currentTimeMillis() - lastSuccessMs
+                if (lastSuccessMs > 0 && sinceSuccess > DEAD_MS) {
+                    Log.w(TAG, "No response for ${sinceSuccess}ms — marking disconnected")
+                    stateManager.onDisconnected()
+                    lastSuccessMs = 0
+                }
+            }
+            delay(POLL_MS)
+        }
+    }
+
+    fun sendDecision(id: String, approve: Boolean) {
+        val st = stateManager.state.value
+        if (!st.isConfigured) return
+        scope.launch {
+            val client = BuddyHttpClient(st.daemonUrl, st.daemonToken)
+            client.sendDecision(id, approve)
+            if (approve) stateManager.onApprove() else stateManager.onDeny()
+            stateManager.onDecisionMade(id)
+        }
+    }
+
+    fun reconnect() {
+        lastSuccessMs = 0
+        startPolling()
+    }
+
+    // ── Notification ──────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>r1 · install creation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg:     #070708;
+    --screen: #0a0a0c;
+    --ink:    #f4f2ee;
+    --dim:    #6e6c66;
+    --track:  #1a1916;
+    --line:   #1c1b19;
+    --orange: #ff5a1f;
+    --amber:  #ffb347;
+    --teal:   #46d6cf;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(900px 400px at 70% -10%, #13110e 0, transparent 60%), var(--bg);
+    color: var(--ink);
+    font-family: "DM Mono", ui-monospace, monospace;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    padding: 48px 40px 44px;
+    background: var(--screen);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    box-shadow: 0 40px 80px -30px #000;
+    max-width: 420px;
+    width: 100%;
+  }
+
+  .header { text-align: center; }
+  .kick {
+    font-size: 10px;
+    letter-spacing: .42em;
+    text-transform: uppercase;
+    color: var(--orange);
+    font-weight: 500;
+  }
+  .title {
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-weight: 800;
+    font-size: 26px;
+    letter-spacing: -.02em;
+    margin-top: 10px;
+    color: var(--ink);
+  }
+  .title em { font-style: normal; color: var(--dim); }
+  .sub {
+    font-size: 10.5px;
+    color: var(--dim);
+    margin-top: 10px;
+    line-height: 1.7;
+    letter-spacing: .03em;
+  }
+  .sub b { color: var(--ink); font-weight: 500; }
+
+  /* QR frame */
+  .qr-wrap {
+    background: #fff;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 0 0 1px var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 220px;
+    min-height: 220px;
+  }
+  #qr canvas, #qr img { display: block; border-radius: 4px; }
+
+  /* URL row */
+  .url-row {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .url-label {
+    font-size: 9px;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .url-field {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  input[type="text"] {
+    flex: 1;
+    background: var(--track);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--ink);
+    font-family: "DM Mono", ui-monospace, monospace;
+    font-size: 11px;
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  input[type="text"]:focus { border-color: var(--orange); }
+  button {
+    background: var(--orange);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-family: "DM Mono", ui-monospace, monospace;
+    font-size: 11px;
+    padding: 9px 16px;
+    cursor: pointer;
+    letter-spacing: .04em;
+    transition: filter .15s;
+    flex-shrink: 0;
+  }
+  button:hover { filter: brightness(1.15); }
+  button:active { filter: brightness(.9); }
+
+  .steps {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    font-size: 10.5px;
+    color: var(--dim);
+    letter-spacing: .02em;
+    line-height: 1.55;
+  }
+  .step .n {
+    font-family: "Bricolage Grotesque", sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--orange);
+    flex-shrink: 0;
+    line-height: 1.35;
+  }
+  .step b { color: var(--ink); font-weight: 500; }
+
+  .divider {
+    width: 100%;
+    height: 1px;
+    background: var(--line);
+  }
+
+  #status {
+    font-size: 9px;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  #status.ok  { color: var(--teal); }
+  #status.err { color: var(--amber); }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div class="header">
+    <div class="kick">rabbit r1 · creation</div>
+    <div class="title">install <em>/ usage meter</em></div>
+    <div class="sub">
+      scan with your r1 to install the creation.<br>
+      make sure the daemon is running and <b>Tailscale Funnel</b> is on.
+    </div>
+  </div>
+
+  <div class="qr-wrap">
+    <div id="qr"></div>
+  </div>
+
+  <div class="url-row">
+    <div class="url-label">creation url</div>
+    <div class="url-field">
+      <input type="text" id="url-input" placeholder="https://…">
+      <button onclick="generate()">↻</button>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="steps">
+    <div class="step">
+      <span class="n">1</span>
+      <span>Run <b>tailscale funnel 7700</b> to expose the daemon over HTTPS.</span>
+    </div>
+    <div class="step">
+      <span class="n">2</span>
+      <span>Open this page via your Tailscale URL — the QR auto-updates to the right address.</span>
+    </div>
+    <div class="step">
+      <span class="n">3</span>
+      <span>On the r1: <b>Settings → Creations → Install</b> and scan the QR code.</span>
+    </div>
+    <div class="step">
+      <span class="n">4</span>
+      <span>First launch shows the <b>pair</b> screen — enter the 6-digit code printed in the daemon logs.</span>
+    </div>
+  </div>
+
+  <span id="status">generating qr…</span>
+</div>
+
+<script>
+const STATUS = document.getElementById("status");
+const INPUT  = document.getElementById("url-input");
+
+// Derive creation URL from current page URL: strip /qr suffix
+function creationUrl() {
+  return window.location.origin + "/";
+}
+
+function generate() {
+  const url = INPUT.value.trim() || creationUrl();
+  INPUT.value = url;
+  const container = document.getElementById("qr");
+  container.innerHTML = "";
+  STATUS.className = "";
+  STATUS.textContent = "generating qr…";
+  QRCode.toCanvas(url, {
+    width: 220,
+    margin: 0,
+    color: { dark: "#000000", light: "#ffffff" },
+    errorCorrectionLevel: "M",
+  }, (err, canvas) => {
+    if (err) {
+      container.textContent = "⚠ qrcode.js failed to load (check internet)";
+      STATUS.className = "err";
+      STATUS.textContent = "error";
+      return;
+    }
+    canvas.style.borderRadius = "4px";
+    container.appendChild(canvas);
+    STATUS.className = "ok";
+    STATUS.textContent = "ready to scan";
+  });
+}
+
+INPUT.value = creationUrl();
+generate();
+INPUT.addEventListener("keydown", e => { if (e.key === "Enter") generate(); });
+</script>
+</body>
+</html>

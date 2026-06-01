@@ -7,14 +7,6 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 
 val REQUIRED_PERMISSIONS: Array<String> = buildList {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        add(Manifest.permission.BLUETOOTH_ADVERTISE)
-        add(Manifest.permission.BLUETOOTH_CONNECT)
-    } else {
-        add(Manifest.permission.BLUETOOTH)
-        add(Manifest.permission.BLUETOOTH_ADMIN)
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         add(Manifest.permission.POST_NOTIFICATIONS)
     }

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>r1 · usage meter — ui</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070708;--screen:#0a0a0c;--ink:#f4f2ee;--dim:#6e6c66;
+    --track:#1a1916;--line:#1c1b19;
+    --orange:#ff5a1f;--amber:#ffb347;--red:#ff3b30;--teal:#46d6cf;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:radial-gradient(1100px 520px at 80% -8%,#13110e 0,transparent 60%),var(--bg);
+    color:var(--ink);font-family:"DM Mono",monospace;min-height:100vh;
+    padding:52px 32px 72px;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:980px;margin:0 auto}
+  .head{margin-bottom:40px}
+  .kick{font-size:10px;letter-spacing:.42em;text-transform:uppercase;color:var(--orange);font-weight:500}
+  .h1{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:34px;letter-spacing:-.02em;margin-top:12px}
+  .h1 em{font-style:normal;color:var(--dim)}
+  .lead{font-size:11px;color:var(--dim);letter-spacing:.04em;margin-top:14px;max-width:560px;line-height:1.7}
+  .lead b{color:var(--ink);font-weight:500}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:46px 30px;justify-items:center}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:16px}
+
+  .scr{width:240px;height:282px;border-radius:20px;overflow:hidden;background:var(--screen);
+    border:1px solid #19181a;box-shadow:0 30px 60px -28px #000,inset 0 1px 0 #ffffff0a;
+    display:flex;flex-direction:column}
+  .top{display:flex;justify-content:space-between;align-items:center;padding:13px 15px 0}
+  .st{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim)}
+  .mdl{font-size:8px;letter-spacing:.12em;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:3px 8px}
+
+  .gauges{flex:1;display:flex;align-items:center;justify-content:center;gap:18px;padding:6px 14px 0}
+  .g{display:flex;flex-direction:column;align-items:center;gap:9px}
+  .glabel{font-size:8px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+  .ring{width:84px;height:84px;border-radius:50%;display:grid;place-items:center;position:relative;
+    background:conic-gradient(var(--c) calc(var(--p)*1%), var(--track) 0)}
+  .ring::before{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--screen)}
+  .ring .v{position:relative;z-index:1;font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:21px;line-height:1}
+  .ring .v small{font-size:9px;font-weight:600;color:var(--dim)}
+  .reset{font-size:8.5px;color:var(--dim);letter-spacing:.04em}
+  .reset b{color:var(--ink);font-weight:500}
+
+  .foot{padding:0 15px 13px;display:flex;align-items:center;justify-content:center;gap:8px;
+    font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+  .pip{width:7px;height:7px;border-radius:50%}
+
+  .cap{text-align:center}
+  .cap .nm{font-family:"Bricolage Grotesque",sans-serif;font-weight:600;font-size:13px}
+  .cap .ds{font-size:9.5px;color:var(--dim);margin-top:5px;letter-spacing:.03em;max-width:210px}
+
+  .crit .ring.hot{animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.35)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="kick">rabbit r1 · creation</div>
+    <div class="h1">usage meter <em>/ /meter</em></div>
+    <div class="lead">two rings off one <b>GET /meter</b> poll — <b>session</b> (5-hour) and <b>weekly</b>, each with its reset countdown. colour does the talking: calm under ~70%, amber climbing, red when you're about to hit the wall.</div>
+  </div>
+
+  <div class="grid">
+
+    <!-- HEALTHY -->
+    <div class="cell">
+      <div class="scr">
+        <div class="top"><span class="st">usage</span><span class="mdl">live</span></div>
+        <div class="gauges">
+          <div class="g">
+            <span class="glabel">session</span>
+            <div class="ring" style="--p:38;--c:var(--teal)"><span class="v">38<small>%</small></span></div>
+            <span class="reset">resets <b>2h22m</b></span>
+          </div>
+          <div class="g">
+            <span class="glabel">weekly</span>
+            <div class="ring" style="--p:52;--c:var(--orange)"><span class="v">52<small>%</small></span></div>
+            <span class="reset">resets <b>3d12h</b></span>
+          </div>
+        </div>
+        <div class="foot"><span class="pip" style="background:var(--teal)"></span>plenty of headroom</div>
+      </div>
+      <div class="cap"><div class="nm">healthy</div><div class="ds">well under limits — calm colours</div></div>
+    </div>
+
+    <!-- WEEKLY HIGH -->
+    <div class="cell">
+      <div class="scr">
+        <div class="top"><span class="st">usage</span><span class="mdl">live</span></div>
+        <div class="gauges">
+          <div class="g">
+            <span class="glabel">session</span>
+            <div class="ring" style="--p:61;--c:var(--orange)"><span class="v">61<small>%</small></span></div>
+            <span class="reset">resets <b>1h05m</b></span>
+          </div>
+          <div class="g">
+            <span class="glabel">weekly</span>
+            <div class="ring" style="--p:86;--c:var(--amber)"><span class="v">86<small>%</small></span></div>
+            <span class="reset">resets <b>1d20h</b></span>
+          </div>
+        </div>
+        <div class="foot"><span class="pip" style="background:var(--amber)"></span>weekly running low</div>
+      </div>
+      <div class="cap"><div class="nm">amber</div><div class="ds">weekly past ~85% — ease off the big jobs</div></div>
+    </div>
+
+    <!-- SESSION CRITICAL -->
+    <div class="cell">
+      <div class="scr crit">
+        <div class="top"><span class="st" style="color:var(--red)">near limit</span><span class="mdl">live</span></div>
+        <div class="gauges">
+          <div class="g">
+            <span class="glabel">session</span>
+            <div class="ring hot" style="--p:94;--c:var(--red)"><span class="v">94<small>%</small></span></div>
+            <span class="reset">resets <b>0h38m</b></span>
+          </div>
+          <div class="g">
+            <span class="glabel">weekly</span>
+            <div class="ring" style="--p:88;--c:var(--amber)"><span class="v">88<small>%</small></span></div>
+            <span class="reset">resets <b>1d04h</b></span>
+          </div>
+        </div>
+        <div class="foot"><span class="pip" style="background:var(--red)"></span>session almost spent</div>
+      </div>
+      <div class="cap"><div class="nm">critical</div><div class="ds">session &gt;90% — ring pulses to catch the eye</div></div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

@@ -35,6 +35,10 @@ data class Snapshot(
     val prompt: PromptRequest? = null,
     val chat: List<ChatEntry> = emptyList(),
     val sessions: List<SessionInfo> = emptyList(),
+    val s: Int = -1,    // session usage % (-1 = not yet known)
+    val sr: Int = 0,    // session reset minutes
+    val w: Int = -1,    // weekly usage %
+    val wr: Int = 0,    // weekly reset minutes
 )
 
 @Serializable

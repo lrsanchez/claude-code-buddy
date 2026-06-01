@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=240, initial-scale=1.0, user-scalable=no">
+<title>voice</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 240px; height: 282px; overflow: hidden;
+  background: #0a0a0c; color: #f4f2ee;
+  font-family: ui-monospace, "Courier New", monospace;
+  -webkit-font-smoothing: antialiased;
+}
+.screen { width: 240px; height: 282px; display: flex; flex-direction: column; }
+
+/* ── top bar ── */
+.top {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 14px 0; flex-shrink: 0;
+}
+.st  { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: #6e6c66; }
+.mdl { font-size: 9px; color: #6e6c66; border: 1px solid #1c1b19; border-radius: 20px; padding: 3px 8px; }
+.mdl b { color: #ffb066; font-weight: normal; }
+
+/* ── orb stage ── */
+.stage {
+  flex: 1; display: flex; align-items: center; justify-content: center; position: relative;
+}
+.orb {
+  position: relative; width: 100px; height: 100px;
+  display: flex; align-items: center; justify-content: center;
+}
+.core {
+  width: 64px; height: 64px; border-radius: 50%; position: relative; z-index: 2;
+  background: radial-gradient(circle at 38% 32%, #ffb347, #ff5a1f 52%, #7c2105 100%);
+  box-shadow: 0 0 28px -4px #ff5a1f, 0 0 60px -12px #ff5a1f, inset 0 0 12px #ffffff30;
+}
+.halo {
+  position: absolute; inset: -20px; border-radius: 50%; z-index: 1;
+  background: radial-gradient(circle, rgba(255,90,31,.28) 0%, transparent 62%);
+  filter: blur(2px);
+}
+/* ripple rings (listening) */
+.r1, .r2 {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1.5px solid #ff5a1f; opacity: 0; z-index: 0;
+}
+/* border-based spinner (thinking) — no conic-gradient */
+.spinner {
+  position: absolute; inset: -14px; border-radius: 50%; z-index: 0;
+  border: 3px solid transparent;
+  border-top-color: #ff5a1f;
+  border-right-color: #ff5a1f;
+  opacity: 0;
+}
+/* equalizer (speaking) */
+.eq {
+  position: absolute; bottom: 0; left: 50%;
+  -webkit-transform: translateX(-50%); transform: translateX(-50%);
+  display: none; gap: 3px; align-items: flex-end; height: 24px; z-index: 3;
+}
+.eq i { width: 4px; height: 6px; border-radius: 3px; background: linear-gradient(#ffb347, #ff5a1f); display: block; }
+
+/* ── transcript ── */
+.talk {
+  padding: 0 14px 8px;
+  flex-shrink: 0;
+  height: 80px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+.line { font-size: 10px; line-height: 1.45; margin-top: 5px; }
+.who  { font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: #6e6c66; display: block; margin-bottom: 1px; }
+.line.you  { color: #cfcdc7; }
+.line.ai   { color: #f4f2ee; }
+
+/* ── hint / footer ── */
+.hint {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: #6e6c66; padding: 0 14px 12px; flex-shrink: 0;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #6e6c66; flex-shrink: 0; }
+
+/* ── pairing screen ── */
+.pair-digits { display: flex; justify-content: center; gap: 5px; padding: 10px 14px 0; }
+.pd {
+  width: 28px; height: 38px; border-radius: 7px;
+  border: 1px solid #1c1b19; background: #100f12;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: bold; color: #f4f2ee;
+}
+.pd.active { border-color: #ff5a1f; box-shadow: 0 0 8px -3px #ff5a1f; }
+.pd.filled { border-color: #2a2a2a; }
+.pair-hint { font-size: 11px; color: #6e6c66; text-align: center; padding: 7px 14px 0; }
+.pair-hint b { color: #ffb347; font-weight: normal; }
+.perr { font-size: 10px; color: #ff3b30; text-align: center; min-height: 14px; padding: 2px 0; }
+.numpad { width: 100%; flex: 1; display: flex; flex-direction: column; }
+.np-row { display: flex; flex: 1; }
+.np-btn {
+  flex: 1; border: none; border-top: 1px solid #1c1b19; border-right: 1px solid #1c1b19;
+  background: #0d0d0f; color: #f4f2ee;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 20px; font-weight: bold; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.np-btn:nth-child(3) { border-right: none; }
+.np-btn:active { background: #1a1916; }
+.np-del { color: #6e6c66; font-size: 18px; }
+.np-ok  { background: #1a0a05; color: #ff5a1f; font-size: 18px; }
+
+/* ── state animations ── */
+
+/* idle */
+.idle .core { -webkit-animation: breathe 3.4s ease-in-out infinite; animation: breathe 3.4s ease-in-out infinite; }
+.idle .halo { -webkit-animation: glowPulse 3.4s ease-in-out infinite; animation: glowPulse 3.4s ease-in-out infinite; }
+
+/* listening */
+.listening .st { color: #ff5a1f; }
+.listening .dot { background: #ff5a1f; box-shadow: 0 0 6px #ff5a1f; }
+.listening .core { -webkit-animation: breatheFast 1.3s ease-in-out infinite; animation: breatheFast 1.3s ease-in-out infinite; }
+.listening .r1 { -webkit-animation: ripple 2.4s ease-out infinite; animation: ripple 2.4s ease-out infinite; }
+.listening .r2 { -webkit-animation: ripple 2.4s ease-out 1.2s infinite; animation: ripple 2.4s ease-out 1.2s infinite; }
+
+/* thinking */
+.thinking .st { color: #ffb066; }
+.thinking .dot { background: #ffb066; }
+.thinking .spinner { opacity: 1; -webkit-animation: spin 1s linear infinite; animation: spin 1s linear infinite; }
+.thinking .core { -webkit-animation: pulseDim 1.1s ease-in-out infinite; animation: pulseDim 1.1s ease-in-out infinite; }
+
+/* speaking */
+.speaking .st { color: #ff5a1f; }
+.speaking .dot { background: #ff5a1f; }
+.speaking .core { -webkit-animation: breathe 2s ease-in-out infinite; animation: breathe 2s ease-in-out infinite; }
+.speaking .eq { display: flex; }
+.speaking .eq i { -webkit-animation: bar .9s ease-in-out infinite; animation: bar .9s ease-in-out infinite; }
+.speaking .eq i:nth-child(1) { -webkit-animation-delay: 0s;    animation-delay: 0s; }
+.speaking .eq i:nth-child(2) { -webkit-animation-delay: .12s;  animation-delay: .12s; }
+.speaking .eq i:nth-child(3) { -webkit-animation-delay: .24s;  animation-delay: .24s; }
+.speaking .eq i:nth-child(4) { -webkit-animation-delay: .36s;  animation-delay: .36s; }
+.speaking .eq i:nth-child(5) { -webkit-animation-delay: .18s;  animation-delay: .18s; }
+.speaking .eq i:nth-child(6) { -webkit-animation-delay: .06s;  animation-delay: .06s; }
+
+/* hide elements not in use */
+.idle .eq, .listening .eq, .thinking .eq { display: none; }
+
+@-webkit-keyframes breathe    { 0%,100%{-webkit-transform:scale(1)} 50%{-webkit-transform:scale(1.08)} }
+@keyframes breathe             { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+@-webkit-keyframes breatheFast { 0%,100%{-webkit-transform:scale(1)} 50%{-webkit-transform:scale(1.1)} }
+@keyframes breatheFast         { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
+@-webkit-keyframes pulseDim    { 0%,100%{-webkit-transform:scale(1);filter:brightness(.8)} 50%{-webkit-transform:scale(1.05);filter:brightness(1.1)} }
+@keyframes pulseDim            { 0%,100%{transform:scale(1);filter:brightness(.8)} 50%{transform:scale(1.05);filter:brightness(1.1)} }
+@-webkit-keyframes glowPulse   { 0%,100%{opacity:.4} 50%{opacity:.85} }
+@keyframes glowPulse           { 0%,100%{opacity:.4} 50%{opacity:.85} }
+@-webkit-keyframes ripple      { 0%{opacity:.55;-webkit-transform:scale(.5)} 100%{opacity:0;-webkit-transform:scale(1.6)} }
+@keyframes ripple              { 0%{opacity:.55;transform:scale(.5)} 100%{opacity:0;transform:scale(1.6)} }
+@-webkit-keyframes spin        { to{-webkit-transform:rotate(360deg)} }
+@keyframes spin                { to{transform:rotate(360deg)} }
+@-webkit-keyframes bar         { 0%,100%{height:6px} 50%{height:22px} }
+@keyframes bar                 { 0%,100%{height:6px} 50%{height:22px} }
+</style>
+</head>
+<body>
+
+<!-- ── voice screen ─────────────────────────────────────────────────────── -->
+<div class="screen idle" id="voice-scr" style="position:relative">
+  <div class="top">
+    <span class="st" id="v-st">ready</span>
+    <div style="display:flex;gap:5px;align-items:center">
+      <span id="tts-btn" class="mdl" onclick="toggleTts()" style="cursor:pointer;-webkit-tap-highlight-color:transparent" title="toggle voice"></span>
+      <span class="mdl">via <b id="v-model">gemini</b></span>
+    </div>
+  </div>
+  <div class="stage">
+    <div class="orb">
+      <span class="r1"></span>
+      <span class="r2"></span>
+      <span class="spinner"></span>
+      <span class="halo"></span>
+      <span class="core"></span>
+      <span class="eq"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+  </div>
+  <!-- tap-to-begin overlay: dismissed on first screen touch to unlock WebView audio -->
+  <div id="activate-overlay" style="
+    display:none; position:absolute; inset:0; z-index:50;
+    background:rgba(10,10,12,.85);
+    align-items:center; justify-content:center; flex-direction:column; gap:10px;
+    cursor:pointer; -webkit-tap-highlight-color:transparent;">
+    <div style="font-size:11px;color:#6e6c66;letter-spacing:.25em;text-transform:uppercase">tap to begin</div>
+    <div style="width:40px;height:40px;border-radius:50%;border:1.5px solid #6e6c66;display:flex;align-items:center;justify-content:center">
+      <div style="width:14px;height:14px;border-radius:50%;background:#6e6c66"></div>
+    </div>
+  </div>
+  <div class="talk" id="talk">
+    <!-- transcript lines injected here -->
+  </div>
+  <div class="hint">
+    <span class="dot" id="v-dot"></span>
+    <span id="v-hint">hold to talk</span>
+  </div>
+</div>
+
+<!-- ── pairing screen ────────────────────────────────────────────────────── -->
+<div class="screen" id="pair-scr" style="display:none">
+  <div class="top">
+    <span class="st">pair</span>
+    <span class="mdl">first run</span>
+  </div>
+  <div class="pair-digits" id="pair-digits"></div>
+  <div class="pair-hint">code from your <b>server logs</b></div>
+  <div class="perr" id="pair-err"></div>
+  <div class="numpad">
+    <div class="np-row">
+      <button class="np-btn" onclick="npKey(1)">1</button>
+      <button class="np-btn" onclick="npKey(2)">2</button>
+      <button class="np-btn" onclick="npKey(3)">3</button>
+    </div>
+    <div class="np-row">
+      <button class="np-btn" onclick="npKey(4)">4</button>
+      <button class="np-btn" onclick="npKey(5)">5</button>
+      <button class="np-btn" onclick="npKey(6)">6</button>
+    </div>
+    <div class="np-row">
+      <button class="np-btn" onclick="npKey(7)">7</button>
+      <button class="np-btn" onclick="npKey(8)">8</button>
+      <button class="np-btn" onclick="npKey(9)">9</button>
+    </div>
+    <div class="np-row">
+      <button class="np-btn np-del" onclick="npDel()">⌫</button>
+      <button class="np-btn" onclick="npKey(0)">0</button>
+      <button class="np-btn np-ok" onclick="pairSubmit()">✓</button>
+    </div>
+  </div>
+</div>
+
+<script>
+window.onerror = function(msg, src, line) {
+  document.body.style.cssText = 'background:#0a0a0c;padding:12px;font-family:monospace;font-size:9px;color:#ff3b30;width:240px;height:282px;overflow:hidden;word-break:break-word';
+  document.body.innerHTML = 'ERR line ' + line + ':<br>' + msg;
+};
+
+// ── config ────────────────────────────────────────────────────────────────────
+var MODEL_LABEL = 'perplexity';  // display label in top bar — matches VOICE_MODEL in .env
+
+// ── storage ───────────────────────────────────────────────────────────────────
+function storageGet() {
+  try { if (window.creationStorage && creationStorage.plain) return JSON.parse(atob(creationStorage.plain)); } catch(e) {}
+  try { return JSON.parse(localStorage.getItem('bv') || '{}'); } catch(e) { return {}; }
+}
+function storageSet(d) {
+  var s = JSON.stringify(d);
+  try { if (window.creationStorage) { creationStorage.plain = btoa(s); return; } } catch(e) {}
+  try { localStorage.setItem('bv', s); } catch(e) {}
+}
+
+// ── state ─────────────────────────────────────────────────────────────────────
+var token      = storageGet().token || null;
+var sessionId  = storageGet().sessionId || null;
+
+if (!sessionId) {
+  sessionId = 'v' + Math.random().toString(36).slice(2, 10);
+  var st = storageGet(); st.sessionId = sessionId; storageSet(st);
+}
+
+var currentState = 'idle';
+var mediaStream  = null;
+var mediaRecorder = null;
+var audioChunks  = [];
+var busy         = false;   // prevent overlapping requests
+
+function setState(s) {
+  currentState = s;
+  var scr = document.getElementById('voice-scr');
+  scr.className = 'screen ' + s;
+  var labels = { idle: 'ready', listening: 'listening', thinking: 'thinking', speaking: 'speaking' };
+  document.getElementById('v-st').textContent = labels[s] || s;
+  var hints = { idle: 'hold to talk', listening: 'release to send', thinking: 'routing · stt → model', speaking: 'wheel ↑↓ history' };
+  document.getElementById('v-hint').textContent = hints[s] || '';
+}
+
+// ── transcript ────────────────────────────────────────────────────────────────
+var transcript = [];   // [{role, text}]
+
+function addLine(role, text) {
+  transcript.push({ role: role, text: text });
+  if (transcript.length > 4) transcript = transcript.slice(-4);
+  renderTranscript();
+}
+
+function renderTranscript() {
+  var el = document.getElementById('talk');
+  el.innerHTML = '';
+  // Show all stored lines — container scrolls
+  for (var i = 0; i < transcript.length; i++) {
+    var e = transcript[i];
+    var div = document.createElement('div');
+    div.className = 'line ' + (e.role === 'user' ? 'you' : 'ai');
+    var who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = e.role === 'user' ? 'you' : 'buddy';
+    var txt = document.createTextNode(e.text);
+    div.appendChild(who);
+    div.appendChild(txt);
+    el.appendChild(div);
+  }
+  // Auto-scroll to latest
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── beeps (Web Audio API) ─────────────────────────────────────────────────────
+var _actx = null;
+function _audioCtx() {
+  if (!_actx) {
+    try { _actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
+  return _actx;
+}
+function beep(freq, dur, vol) {
+  var ctx = _audioCtx(); if (!ctx) return;
+  try {
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = freq || 440; o.type = 'sine';
+    g.gain.setValueAtTime(vol || 0.18, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    o.start(ctx.currentTime); o.stop(ctx.currentTime + dur);
+  } catch(e) {}
+}
+function beepStart()   { beep(440, 0.09); }                                           // low — recording
+function beepSent()    { beep(660, 0.07); }                                           // mid — sent
+function beepReady()   { beep(880, 0.06); setTimeout(function(){beep(1100,0.06);},75); } // double — reply
+
+// ── TTS ───────────────────────────────────────────────────────────────────────
+var ttsEnabled = true;
+
+function toggleTts() {
+  ttsEnabled = !ttsEnabled;
+  var s = storageGet(); s.ttsEnabled = ttsEnabled; storageSet(s);
+  renderTtsBtn();
+  if (!ttsEnabled && window.speechSynthesis) window.speechSynthesis.cancel();
+}
+
+function renderTtsBtn() {
+  var el = document.getElementById('tts-btn');
+  if (!el) return;
+  el.textContent   = ttsEnabled ? 'spk' : 'mute';
+  el.style.color   = ttsEnabled ? '#ff5a1f' : '#6e6c66';
+  el.style.borderColor = ttsEnabled ? '#ff5a1f' : '#1c1b19';
+}
+
+// ── TTS via Web Audio (backend sends base64 MP3 from edge-tts) ───────────────
+// speechSynthesis is broken in Chrome 101 WebView on the R1.
+// Web Audio API works (beeps prove it), so we decode the backend audio there.
+
+var _currentSource = null;
+
+function playAudioB64(b64, fallbackText) {
+  if (!ttsEnabled) { setState('idle'); return; }
+  var ctx = _audioCtx();
+  if (!ctx) { setState('idle'); return; }
+  if (ctx.state === 'suspended') { ctx.resume(); }
+  if (_currentSource) { try { _currentSource.stop(); } catch(e) {} _currentSource = null; }
+  try {
+    // atob → Uint8Array → ArrayBuffer
+    var binary = atob(b64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    setState('speaking');
+    ctx.decodeAudioData(
+      bytes.buffer,
+      function(buffer) {
+        var src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.onended = function() { _currentSource = null; setState('idle'); };
+        src.start(0);
+        _currentSource = src;
+      },
+      function() { setState('idle'); }   // decode failed
+    );
+  } catch(e) { setState('idle'); }
+}
+
+function speak(text) {
+  // Fallback: device speechSynthesis (may not work on R1 but keep as safety net)
+  if (!ttsEnabled) { setState('idle'); return; }
+  if (!window.speechSynthesis) { setState('idle'); return; }
+  window.speechSynthesis.cancel();
+  var u = new SpeechSynthesisUtterance(text);
+  u.onstart = function() { setState('speaking'); };
+  u.onend   = function() { setState('idle'); };
+  u.onerror = function() { setState('idle'); };
+  window.speechSynthesis.speak(u);
+  setTimeout(function() { if (currentState !== 'idle') setState('idle'); },
+             Math.max(3000, text.length * 75) + 1500);
+}
+
+// ── audio ─────────────────────────────────────────────────────────────────────
+function startRecording() {
+  if (busy || currentState !== 'idle') return;
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    .then(function(stream) {
+      mediaStream = stream;
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) audioChunks.push(e.data);
+      };
+      mediaRecorder.start();
+      beepStart();
+      setState('listening');
+    })
+    .catch(function(e) {
+      document.getElementById('v-hint').textContent = 'mic error: ' + e.name;
+    });
+}
+
+function stopRecording() {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+  mediaRecorder.onstop = function() {
+    var blob = new Blob(audioChunks, { type: 'audio/webm' });
+    sendAudio(blob);
+  };
+  mediaRecorder.stop();
+  if (mediaStream) { mediaStream.getTracks().forEach(function(t) { t.stop(); }); }
+  beepSent();
+  setState('thinking');
+}
+
+function sendAudio(blob) {
+  busy = true;
+  var fd = new FormData();
+  fd.append('audio', blob, 'audio.webm');
+  fd.append('session_id', sessionId);
+  fetch('/ask', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd })
+    .then(function(r) {
+      if (r.status === 401 || r.status === 403) { token = null; storageSet({ sessionId: sessionId }); showPair(); busy = false; return null; }
+      return r.json();
+    })
+    .then(function(d) {
+      busy = false;
+      if (!d) return;
+      if (d.transcript) addLine('user', d.transcript);
+      if (d.ok && d.text) {
+        beepReady();
+        addLine('ai', d.text);
+        if (d.audio) {
+          playAudioB64(d.audio, d.text);   // backend-generated MP3 via Web Audio
+        } else {
+          speak(d.text);                   // fallback: device speechSynthesis
+        }
+      } else { setState('idle'); }
+    })
+    .catch(function() { busy = false; setState('idle'); });
+}
+
+// ── pairing ───────────────────────────────────────────────────────────────────
+var npDigits = [];
+var npPos    = 0;
+var pairBusy = false;
+
+function npRender() {
+  var c = document.getElementById('pair-digits');
+  if (!c) return;
+  c.innerHTML = '';
+  for (var i = 0; i < 6; i++) {
+    var el = document.createElement('div');
+    el.className = 'pd' + (i === npPos && !pairBusy ? ' active' : (i < npDigits.length ? ' filled' : ''));
+    el.textContent = i < npDigits.length ? npDigits[i] : '';
+    c.appendChild(el);
+  }
+}
+
+function npKey(d) {
+  if (pairBusy || npDigits.length >= 6) return;
+  document.getElementById('pair-err').textContent = '';
+  npDigits.push(d); npPos = npDigits.length;
+  npRender();
+  if (npDigits.length === 6) pairSubmit();
+}
+
+function npDel() {
+  if (pairBusy) return;
+  npDigits.pop(); npPos = npDigits.length; npRender();
+}
+
+function pairSubmit() {
+  if (pairBusy || npDigits.length < 6) return;
+  var code = npDigits.join('');
+  pairBusy = true; npRender();
+  fetch('/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code }) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      pairBusy = false;
+      if (d.ok && d.token) {
+        token = d.token;
+        var s = storageGet(); s.token = token; storageSet(s);
+        showVoice();
+      } else {
+        document.getElementById('pair-err').textContent = 'wrong code';
+        npDigits = []; npPos = 0; npRender();
+      }
+    })
+    .catch(function() { pairBusy = false; document.getElementById('pair-err').textContent = 'network error'; });
+}
+
+// ── screen switching ──────────────────────────────────────────────────────────
+function showVoice() {
+  document.getElementById('pair-scr').style.display  = 'none';
+  document.getElementById('voice-scr').style.display = 'flex';
+  setState('idle');
+  if (!_audioUnlocked) _showActivateOverlay();
+}
+
+function showPair() {
+  window.speechSynthesis && window.speechSynthesis.cancel();
+  document.getElementById('voice-scr').style.display = 'none';
+  document.getElementById('pair-scr').style.display  = 'flex';
+  npDigits = []; npPos = 0; pairBusy = false; npRender();
+}
+
+// ── audio unlock (MUST happen on a real screen touch — hardware buttons don't count) ──
+// Chrome WebView enforces that AudioContext and getUserMedia require a touch/click
+// user gesture. R1 hardware events (longPressStart, sideClick) are NOT counted as
+// gestures by the WebView. Solution: show a "tap to begin" overlay on first load;
+// dismissing it with a tap unlocks everything and removes the overlay.
+var _audioUnlocked = false;
+
+function _unlockAudio() {
+  if (_audioUnlocked) return;
+  _audioUnlocked = true;
+  _audioCtx();
+  if (_actx && _actx.state === 'suspended') { _actx.resume().catch(function(){}); }
+  var ov = document.getElementById('activate-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+function _showActivateOverlay() {
+  var ov = document.getElementById('activate-overlay');
+  if (ov) { ov.style.display = 'flex'; ov.onclick = _unlockAudio; }
+}
+
+document.addEventListener('touchstart', _unlockAudio, { passive: true });
+document.addEventListener('mousedown',  _unlockAudio);
+
+// ── R1 events ─────────────────────────────────────────────────────────────────
+window.addEventListener('longPressStart', function() { if (token && _audioUnlocked) startRecording(); });
+window.addEventListener('longPressEnd',   function() { if (token && currentState === 'listening') stopRecording(); });
+window.addEventListener('sideClick',      function() {
+  if (!token) return;
+  if (currentState === 'speaking') {
+    if (_currentSource) { try { _currentSource.stop(); } catch(e) {} _currentSource = null; }
+    window.speechSynthesis && window.speechSynthesis.cancel();
+    setState('idle');
+  }
+});
+
+// Scroll wheel scrolls the transcript history
+window.addEventListener('scrollUp', function() {
+  var el = document.getElementById('talk');
+  if (el) el.scrollTop -= 36;
+});
+window.addEventListener('scrollDown', function() {
+  var el = document.getElementById('talk');
+  if (el) el.scrollTop += 36;
+});
+
+// Mouse/keyboard fallbacks for browser testing
+document.addEventListener('mousedown', function(e) { if (token && e.button === 0) startRecording(); });
+document.addEventListener('mouseup',   function(e) { if (token && e.button === 0 && currentState === 'listening') stopRecording(); });
+document.addEventListener('keydown', function(e) {
+  if (!token) return;
+  if (e.key === 'Enter' && currentState === 'idle') startRecording();
+  else if (e.key === 'Enter' && currentState === 'listening') stopRecording();
+  else if (e.key === 'Escape') { window.speechSynthesis && window.speechSynthesis.cancel(); setState('idle'); }
+});
+
+// ── boot ──────────────────────────────────────────────────────────────────────
+document.getElementById('v-model').textContent = MODEL_LABEL;
+// Restore TTS preference
+var _stored = storageGet();
+ttsEnabled = (_stored.ttsEnabled !== undefined) ? _stored.ttsEnabled : true;
+renderTtsBtn();
+function boot() {
+  if (token) { showVoice(); return; }
+  fetch('/auto-token')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      if (d && d.token) {
+        token = d.token;
+        var s = storageGet(); s.token = token; storageSet(s);
+        showVoice();
+      } else { showPair(); }
+    })
+    .catch(function() { showPair(); });
+}
+boot();
+</script>
+</body>
+</html>

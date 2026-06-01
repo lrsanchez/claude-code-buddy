@@ -58,6 +58,7 @@ fun BuddyScreen(
     onDeny: () -> Unit,
     onToggleTheme: () -> Unit = {},
     onReconnect: () -> Unit = {},
+    onToggleAutoApprove: () -> Unit = {},
 ) {
     val cfg = LocalConfiguration.current
     val isLandscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -80,12 +81,12 @@ fun BuddyScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(C.background)) {
         if (isLandscape) {
-            LandscapeLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle, view)
+            LandscapeLayout(state, C, activePanel, onToggleTheme, onToggleAutoApprove, onReconnect, onPanelToggle, view)
         } else {
-            PortraitLayout(state, C, activePanel, onToggleTheme, onReconnect, onPanelToggle, view)
+            PortraitLayout(state, C, activePanel, onToggleTheme, onToggleAutoApprove, onReconnect, onPanelToggle, view)
         }
         AnimatedVisibility(
-            visible = state.displayState == BuddyDisplayState.APPROVAL,
+            visible = state.displayState == BuddyDisplayState.APPROVAL && !state.autoApprove,
             enter = fadeIn() + scaleIn(initialScale = 0.88f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
             exit  = fadeOut() + scaleOut(targetScale = 0.88f),
         ) {
@@ -99,8 +100,8 @@ fun BuddyScreen(
 @Composable
 private fun LandscapeLayout(
     state: BuddyUiState, C: BuddyColors,
-    activePanel: ActivePanel, onToggleTheme: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit,
-    view: PanelView,
+    activePanel: ActivePanel, onToggleTheme: () -> Unit, onToggleAutoApprove: () -> Unit,
+    onReconnect: () -> Unit, onPanel: () -> Unit, view: PanelView,
 ) {
     Row(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(
@@ -108,7 +109,7 @@ private fun LandscapeLayout(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            TopBar(state, C, onToggleTheme)
+            TopBar(state, C, onToggleTheme, onToggleAutoApprove)
             Spacer(Modifier.height(12.dp))
             BuddyCharacter(state.displayState, C, modifier = Modifier.size(160.dp))
             Spacer(Modifier.height(8.dp))
@@ -124,7 +125,16 @@ private fun LandscapeLayout(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             SessionChips(state.snapshot, C)
-            TokenMeter(state.snapshot.tokens, state.snapshot.tokensToday, state.level, C)
+            TokenMeter(
+    tokens = state.snapshot.tokens,
+    tokensToday = state.snapshot.tokensToday,
+    level = state.level,
+    sessionPct = state.snapshot.s,
+    sessionResetMin = state.snapshot.sr,
+    weeklyPct = state.snapshot.w,
+    weeklyResetMin = state.snapshot.wr,
+    C = C,
+)
             SessionSelector(view, C)
             PanelToggle(activePanel, C, onPanel)
             AnimatedContent(targetState = activePanel,
@@ -144,14 +154,14 @@ private fun LandscapeLayout(
 @Composable
 private fun PortraitLayout(
     state: BuddyUiState, C: BuddyColors,
-    activePanel: ActivePanel, onToggleTheme: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit,
-    view: PanelView,
+    activePanel: ActivePanel, onToggleTheme: () -> Unit, onToggleAutoApprove: () -> Unit,
+    onReconnect: () -> Unit, onPanel: () -> Unit, view: PanelView,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TopBar(state, C, onToggleTheme)
+        TopBar(state, C, onToggleTheme, onToggleAutoApprove)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -167,7 +177,16 @@ private fun PortraitLayout(
                 }
             }
         }
-        TokenMeter(state.snapshot.tokens, state.snapshot.tokensToday, state.level, C)
+        TokenMeter(
+    tokens = state.snapshot.tokens,
+    tokensToday = state.snapshot.tokensToday,
+    level = state.level,
+    sessionPct = state.snapshot.s,
+    sessionResetMin = state.snapshot.sr,
+    weeklyPct = state.snapshot.w,
+    weeklyResetMin = state.snapshot.wr,
+    C = C,
+)
         HorizontalDivider(color = C.divider, thickness = 1.dp)
         SessionSelector(view, C)
         PanelToggle(activePanel, C, onPanel)
@@ -199,7 +218,12 @@ fun ConnectButton(C: BuddyColors = LocalBuddyColors.current, onClick: () -> Unit
 // ── TopBar ────────────────────────────────────────────────────────────────────
 
 @Composable
-fun TopBar(state: BuddyUiState, C: BuddyColors = LocalBuddyColors.current, onToggleTheme: () -> Unit = {}) {
+fun TopBar(
+    state: BuddyUiState,
+    C: BuddyColors = LocalBuddyColors.current,
+    onToggleTheme: () -> Unit = {},
+    onToggleAutoApprove: () -> Unit = {},
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -213,9 +237,27 @@ fun TopBar(state: BuddyUiState, C: BuddyColors = LocalBuddyColors.current, onTog
                 color = C.textSecondary,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Auto-approve toggle chip — text changes so state is unambiguous
+            val autoColor by animateColorAsState(
+                if (state.autoApprove) C.green else C.textSecondary,
+                label = "auto_color",
+            )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (state.autoApprove) C.green.copy(alpha = if (C.isLight) 0.15f else 0.18f) else C.card)
+                    .clickable(onClick = onToggleAutoApprove)
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (state.autoApprove) "auto" else "manual",
+                    fontSize = 9.sp,
+                    color = autoColor,
+                )
+            }
             Text(text = state.deviceName, style = MaterialTheme.typography.labelSmall, color = C.coralDim)
-            // Theme toggle: sun for light mode, moon for dark
             Text(
                 text = if (C.isLight) "☾" else "☀",
                 fontSize = 14.sp,
@@ -420,11 +462,80 @@ private fun Chip(label: String, value: String, color: Color, pulse: Boolean, C: 
 
 // ── Token meter ───────────────────────────────────────────────────────────────
 
+private fun formatMins(m: Int): String {
+    if (m <= 0) return ""
+    val d   = m / 1440
+    val h   = (m % 1440) / 60
+    val min = m % 60
+    return when {
+        d > 0 -> "${d}d${if (h > 0) " ${h}h" else ""}"
+        h > 0 -> "${h}h${if (min > 0) " ${min}m" else ""}"
+        else  -> "${min}m"
+    }
+}
+
 @Composable
-fun TokenMeter(tokens: Long, tokensToday: Long, level: Int, C: BuddyColors = LocalBuddyColors.current) {
-    val prog = (tokensToday % 50_000) / 50_000f
-    val animProg by animateFloatAsState(prog, tween(800), label = "arc")
+private fun UsageRing(pct: Int, resetMin: Int, label: String, C: BuddyColors) {
+    val color = when {
+        pct < 0  -> C.textSecondary.copy(alpha = 0.35f)
+        pct >= 90 -> C.red
+        pct >= 85 -> C.amber
+        pct >= 70 -> C.coral
+        else      -> C.teal
+    }
+    val sweep by animateFloatAsState(
+        if (pct >= 0) pct.coerceIn(0, 100) / 100f else 0f,
+        tween(800), label = "sweep_$label",
+    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(54.dp)) {
+                val stroke = 5.dp.toPx()
+                val inset  = stroke / 2f
+                val sz     = Size(size.width - stroke, size.height - stroke)
+                val tl     = Offset(inset, inset)
+                drawArc(C.card, -90f, 360f, false, topLeft = tl, size = sz,
+                    style = Stroke(stroke, cap = StrokeCap.Round))
+                if (sweep > 0f)
+                    drawArc(color, -90f, sweep * 360f, false, topLeft = tl, size = sz,
+                        style = Stroke(stroke, cap = StrokeCap.Round))
+            }
+            Text(
+                text = if (pct >= 0) "$pct%" else "—",
+                fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = color,
+            )
+        }
+        Text(label, fontSize = 8.sp, color = C.textSecondary)
+        Text(
+            text = if (pct >= 0 && resetMin > 0) formatMins(resetMin) else "",
+            fontSize = 8.sp, color = C.textSecondary,
+        )
+    }
+}
+
+@Composable
+fun TokenMeter(
+    tokens: Long,
+    tokensToday: Long,
+    level: Int,
+    sessionPct: Int = -1,
+    sessionResetMin: Int = 0,
+    weeklyPct: Int = -1,
+    weeklyResetMin: Int = 0,
+    C: BuddyColors = LocalBuddyColors.current,
+) {
+    val hasMeter = sessionPct >= 0 || weeklyPct >= 0
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (hasMeter) {
+            UsageRing(sessionPct, sessionResetMin, "session", C)
+            UsageRing(weeklyPct, weeklyResetMin, "weekly", C)
+        }
+        // Level arc
+        val prog = (tokensToday % 50_000) / 50_000f
+        val animProg by animateFloatAsState(prog, tween(800), label = "arc")
         Box(contentAlignment = Alignment.Center) {
             Canvas(Modifier.size(44.dp)) {
                 val s = 4.dp.toPx()

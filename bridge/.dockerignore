@@ -1,0 +1,23 @@
+# Local daemon files — not needed in the voice container
+buddy_daemon.py
+ble_pairing.py
+buddy_hook.py
+hooks_config.json
+start-buddy.sh
+start-buddy.bat
+start-buddy.command
+start-buddy.ps1
+start-voice.sh
+voice_server.py.bak
+
+# R1 meter files
+r1-meter.html
+r1-qr.html
+
+# Secrets — always inject at runtime via env_file or -e flags
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

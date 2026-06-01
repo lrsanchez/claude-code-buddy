@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=240, initial-scale=1.0, user-scalable=no">
+<title>usage meter</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 240px; height: 282px;
+  overflow: hidden;
+  background: #0a0a0c;
+  color: #f4f2ee;
+  font-family: ui-monospace, "Courier New", monospace;
+}
+.screen {
+  width: 240px; height: 282px;
+  display: flex; flex-direction: column;
+}
+.top {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 14px 0; flex-shrink: 0;
+}
+.st  { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: #6e6c66; }
+.mdl { font-size: 10px; color: #6e6c66; border: 1px solid #1c1b19; border-radius: 20px; padding: 3px 9px; }
+.gauges {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  gap: 14px; padding: 4px 10px 0;
+}
+.g { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.glabel { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: #6e6c66; }
+.reset  { font-size: 11px; color: #6e6c66; }
+.foot {
+  padding: 0 14px 12px; display: flex; align-items: center; justify-content: center;
+  gap: 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: #6e6c66; flex-shrink: 0;
+}
+.pip { width: 8px; height: 8px; border-radius: 50%; background: #6e6c66; flex-shrink: 0; }
+
+/* pairing */
+.pair-digits {
+  display: flex; justify-content: center; gap: 5px;
+  padding: 10px 14px 0;
+}
+.pd {
+  width: 28px; height: 38px; border-radius: 7px;
+  border: 1px solid #1c1b19; background: #100f12;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: bold; color: #f4f2ee;
+}
+.pd.active { border-color: #ff5a1f; box-shadow: 0 0 8px -3px #ff5a1f; }
+.pd.filled { border-color: #2a2a2a; }
+.pair-hint { font-size: 11px; color: #6e6c66; text-align: center; padding: 6px 14px 0; }
+.pair-hint b { color: #ffb347; font-weight: normal; }
+.err { font-size: 11px; color: #ff3b30; text-align: center; min-height: 14px; padding: 2px 0; }
+
+/* numpad */
+.numpad { width: 100%; flex: 1; display: flex; flex-direction: column; }
+.np-row { display: flex; flex: 1; }
+.np-btn {
+  flex: 1; border: none; border-top: 1px solid #1c1b19; border-right: 1px solid #1c1b19;
+  background: #0d0d0f; color: #f4f2ee;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 20px; font-weight: bold; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.np-btn:nth-child(3) { border-right: none; }
+.np-row:first-child .np-btn { border-top: 1px solid #1c1b19; }
+.np-btn:active { background: #1a1916; }
+.np-del { color: #6e6c66; font-size: 18px; }
+.np-ok  { background: #1a0a05; color: #ff5a1f; font-size: 18px; }
+</style>
+</head>
+<body>
+
+<!-- meter screen -->
+<div class="screen" id="meter-scr">
+  <div class="top">
+    <span class="st" id="m-st">usage</span>
+    <span class="mdl" id="m-badge">—</span>
+  </div>
+  <div class="gauges">
+    <div class="g">
+      <span class="glabel">session</span>
+      <canvas id="s-canvas" width="84" height="84"></canvas>
+      <span class="reset" id="s-reset"></span>
+    </div>
+    <div class="g">
+      <span class="glabel">weekly</span>
+      <canvas id="w-canvas" width="84" height="84"></canvas>
+      <span class="reset" id="w-reset"></span>
+    </div>
+  </div>
+  <div class="foot">
+    <span class="pip" id="m-pip"></span>
+    <span id="m-text">connecting…</span>
+  </div>
+</div>
+
+<!-- pairing screen -->
+<div class="screen" id="pair-scr" style="display:none">
+  <div class="top">
+    <span class="st">pair</span>
+    <span class="mdl">first run</span>
+  </div>
+  <div class="pair-digits" id="pair-digits"></div>
+  <div class="pair-hint">code from your <b>server logs</b></div>
+  <div class="err" id="pair-err"></div>
+  <div class="numpad">
+    <div class="np-row">
+      <button class="np-btn" onclick="npKey(1)">1</button>
+      <button class="np-btn" onclick="npKey(2)">2</button>
+      <button class="np-btn" onclick="npKey(3)">3</button>
+    </div>
+    <div class="np-row">
+      <button class="np-btn" onclick="npKey(4)">4</button>
+      <button class="np-btn" onclick="npKey(5)">5</button>
+      <button class="np-btn" onclick="npKey(6)">6</button>
+    </div>
+    <div class="np-row">
+      <button class="np-btn" onclick="npKey(7)">7</button>
+      <button class="np-btn" onclick="npKey(8)">8</button>
+      <button class="np-btn" onclick="npKey(9)">9</button>
+    </div>
+    <div class="np-row">
+      <button class="np-btn np-del" onclick="npDel()">⌫</button>
+      <button class="np-btn" onclick="npKey(0)">0</button>
+      <button class="np-btn np-ok" onclick="submitCode()">✓</button>
+    </div>
+  </div>
+</div>
+
+<script>
+window.onerror = function(msg, src, line) {
+  document.body.style.cssText = 'background:#0a0a0c;padding:12px;font-family:monospace;font-size:9px;color:#ff3b30;width:240px;height:282px;overflow:hidden;word-break:break-word';
+  document.body.innerHTML = 'ERR line ' + line + ':<br>' + msg;
+};
+
+// ── canvas ring drawing ───────────────────────────────────────────────────────
+var TRACK = '#1a1916';
+
+function ringColor(p) {
+  if (p >= 90) return '#ff3b30';
+  if (p >= 85) return '#ffb347';
+  if (p >= 70) return '#ff5a1f';
+  return '#46d6cf';
+}
+
+function drawRing(id, pct, color) {
+  var canvas = document.getElementById(id);
+  var ctx = canvas.getContext('2d');
+  var cx = 42, cy = 42, r = 33, lw = 8;
+
+  ctx.clearRect(0, 0, 84, 84);
+
+  // track (full circle)
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+  ctx.strokeStyle = TRACK;
+  ctx.lineWidth = lw;
+  ctx.stroke();
+
+  // progress arc
+  if (pct > 0) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (pct / 100) * 2 * Math.PI);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  // center label
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (pct >= 0) {
+    ctx.fillStyle = '#f4f2ee';
+    ctx.font = 'bold 19px monospace';
+    ctx.fillText(pct + '%', cx, cy);
+  } else {
+    ctx.fillStyle = '#6e6c66';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText('—', cx, cy);
+  }
+}
+
+// ── storage ───────────────────────────────────────────────────────────────────
+function storageGet() {
+  try {
+    if (window.creationStorage && creationStorage.plain) {
+      return JSON.parse(atob(creationStorage.plain));
+    }
+  } catch (e) {}
+  try { return JSON.parse(localStorage.getItem('bm') || '{}'); } catch (e) { return {}; }
+}
+function storageSet(data) {
+  var s = JSON.stringify(data);
+  try { if (window.creationStorage) { creationStorage.plain = btoa(s); return; } } catch (e) {}
+  try { localStorage.setItem('bm', s); } catch (e) {}
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function fmtMins(m) {
+  if (m < 0)  return '';
+  if (m < 60) return m + 'm';
+  var h = Math.floor(m / 60), rm = m % 60;
+  if (h < 24) return h + 'h' + (rm ? ' ' + rm + 'm' : '');
+  var d = Math.floor(h / 24), rh = h % 24;
+  return d + 'd' + (rh ? ' ' + rh + 'h' : '');
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+function render(d) {
+  var sOk = (d.s >= 0), wOk = (d.w >= 0);
+  var sc = sOk ? ringColor(d.s) : '#6e6c66';
+  var wc = wOk ? ringColor(d.w) : '#6e6c66';
+
+  drawRing('s-canvas', sOk ? d.s : -1, sc);
+  drawRing('w-canvas', wOk ? d.w : -1, wc);
+
+  document.getElementById('s-reset').innerHTML = (sOk && d.sr > 0) ? 'resets <b style="color:#f4f2ee">' + fmtMins(d.sr) + '</b>' : '';
+  document.getElementById('w-reset').innerHTML = (wOk && d.wr > 0) ? 'resets <b style="color:#f4f2ee">' + fmtMins(d.wr) + '</b>' : '';
+
+  var max = Math.max(sOk ? d.s : 0, wOk ? d.w : 0);
+  var pip, txt, stTxt, stColor;
+
+  if (d.st === 'error') {
+    pip = '#6e6c66'; txt = "can't reach api"; stTxt = 'error'; stColor = '#ff3b30';
+  } else if (d.st === 'stale') {
+    pip = '#ffb347'; txt = 'data stale'; stTxt = 'stale'; stColor = '';
+  } else if (!sOk && !wOk) {
+    pip = '#6e6c66'; txt = 'waiting…'; stTxt = 'usage'; stColor = '';
+  } else if (max >= 90) {
+    pip = '#ff3b30'; txt = 'near limit'; stTxt = 'near limit'; stColor = '#ff3b30';
+  } else if (max >= 85) {
+    pip = '#ffb347'; txt = 'running low'; stTxt = 'usage'; stColor = '';
+  } else if (max >= 70) {
+    pip = '#ff5a1f'; txt = 'keep an eye on it'; stTxt = 'usage'; stColor = '';
+  } else {
+    pip = '#46d6cf'; txt = 'plenty of headroom'; stTxt = 'usage'; stColor = '';
+  }
+
+  document.getElementById('m-pip').style.background = pip;
+  document.getElementById('m-text').textContent = txt;
+  var stEl = document.getElementById('m-st');
+  stEl.textContent = stTxt;
+  stEl.style.color = stColor;
+
+  var badge = document.getElementById('m-badge');
+  if (d.ts && d.st === 'ok') {
+    var age = Math.round(Date.now() / 1000 - d.ts);
+    badge.textContent = age < 120 ? 'live' : fmtMins(Math.round(age / 60)) + ' ago';
+  } else {
+    badge.textContent = d.st || '—';
+  }
+}
+
+// ── poll ──────────────────────────────────────────────────────────────────────
+var token = storageGet().token || null;
+
+function pollMeter() {
+  if (!token) return;
+  fetch('/meter', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r) {
+      if (r.status === 401 || r.status === 403) { token = null; storageSet({}); showPair(); return null; }
+      return r.json();
+    })
+    .then(function(d) { if (d) render(d); })
+    .catch(function() { render({ s: -1, w: -1, sr: 0, wr: 0, st: 'error', ts: 0 }); });
+}
+
+// ── pairing ───────────────────────────────────────────────────────────────────
+var npDigits = [];
+var pairBusy = false;
+
+function npRender() {
+  var c = document.getElementById('pair-digits');
+  if (!c) return;
+  c.innerHTML = '';
+  for (var i = 0; i < 6; i++) {
+    var el = document.createElement('div');
+    el.className = 'pd' + (i === npDigits.length && !pairBusy ? ' active' : (i < npDigits.length ? ' filled' : ''));
+    el.textContent = i < npDigits.length ? npDigits[i] : '';
+    c.appendChild(el);
+  }
+}
+
+function npKey(d) {
+  if (pairBusy || npDigits.length >= 6) return;
+  document.getElementById('pair-err').textContent = '';
+  npDigits.push(d);
+  npRender();
+  if (npDigits.length === 6) submitCode();
+}
+
+function npDel() {
+  if (pairBusy) return;
+  document.getElementById('pair-err').textContent = '';
+  npDigits.pop();
+  npRender();
+}
+
+function submitCode() {
+  if (pairBusy || npDigits.length < 6) return;
+  var code = npDigits.join('');
+  pairBusy = true;
+  npRender();
+  fetch('/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code }) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      pairBusy = false;
+      if (d.ok && d.token) { token = d.token; storageSet({ token: token }); showMeter(); }
+      else { document.getElementById('pair-err').textContent = 'wrong code'; npDigits = []; npRender(); }
+    })
+    .catch(function() {
+      pairBusy = false;
+      document.getElementById('pair-err').textContent = 'network error';
+      npDigits = [];
+      npRender();
+    });
+}
+
+// ── screens ───────────────────────────────────────────────────────────────────
+function showMeter() {
+  document.getElementById('pair-scr').style.display = 'none';
+  document.getElementById('meter-scr').style.display = 'flex';
+  pollMeter();
+}
+function showPair() {
+  document.getElementById('meter-scr').style.display = 'none';
+  document.getElementById('pair-scr').style.display = 'flex';
+  npDigits = []; pairBusy = false; npRender();
+}
+
+// ── R1 events ─────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', function(e) {
+  if (token) return;
+  if (e.key >= '0' && e.key <= '9') npKey(parseInt(e.key));
+  else if (e.key === 'Backspace') npDel();
+  else if (e.key === 'Enter') submitCode();
+});
+
+// ── boot ──────────────────────────────────────────────────────────────────────
+function boot() {
+  if (token) { showMeter(); return; }
+  fetch('/auto-token')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      if (d && d.token) {
+        token = d.token;
+        var s = storageGet(); s.token = token; storageSet(s);
+        showMeter();
+      } else { showPair(); }
+    })
+    .catch(function() { showPair(); });
+}
+boot();
+setInterval(pollMeter, 30000);
+</script>
+</body>
+</html>
