@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from typing import Optional
 
 log = logging.getLogger("buddy")
 
