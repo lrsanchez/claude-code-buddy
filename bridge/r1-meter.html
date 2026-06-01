@@ -21,21 +21,43 @@ html, body {
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 14px 0; flex-shrink: 0;
 }
-.st  { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: #6e6c66; }
-.mdl { font-size: 10px; color: #6e6c66; border: 1px solid #1c1b19; border-radius: 20px; padding: 3px 9px; }
+.st  { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: #9a9890; }
+.mdl { font-size: 10px; color: #9a9890; border: 1px solid #2a2926; border-radius: 20px; padding: 3px 9px; }
 .gauges {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  gap: 14px; padding: 4px 10px 0;
+  gap: 18px; padding: 4px 10px 0;
 }
-.g { display: flex; flex-direction: column; align-items: center; gap: 7px; }
-.glabel { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: #6e6c66; }
-.reset  { font-size: 11px; color: #6e6c66; }
+.g { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.glabel { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: #9a9890; }
+.reset  { font-size: 11px; color: #c8c6c0; }
+.reset b { color: #f4f2ee; font-weight: 600; }
+
+/* CSS ring — vector-sharp at any DPR, matches the mockup exactly */
+.ring {
+  width: 88px; height: 88px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  position: relative;
+  /* background set from JS via conic-gradient */
+  background: conic-gradient(#2a2926 0%, #2a2926 0);
+}
+.ring::before {
+  content: ""; position: absolute; inset: 10px;
+  border-radius: 50%; background: #0a0a0c;
+}
+.ring .v {
+  position: relative; z-index: 1;
+  font-weight: 800; font-size: 21px; line-height: 1;
+  color: #f4f2ee; letter-spacing: -.02em;
+}
+.ring .v small { font-size: 10px; font-weight: 600; color: #9a9890; }
+
 .foot {
   padding: 0 14px 12px; display: flex; align-items: center; justify-content: center;
   gap: 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-  color: #6e6c66; flex-shrink: 0;
+  color: #c8c6c0; flex-shrink: 0;
 }
-.pip { width: 8px; height: 8px; border-radius: 50%; background: #6e6c66; flex-shrink: 0; }
+.pip { width: 8px; height: 8px; border-radius: 50%; background: #9a9890; flex-shrink: 0; }
 
 /* pairing */
 .pair-digits {
@@ -82,12 +104,12 @@ html, body {
   <div class="gauges">
     <div class="g">
       <span class="glabel">session</span>
-      <canvas id="s-canvas" width="84" height="84"></canvas>
+      <div class="ring" id="s-ring"><span class="v" id="s-val">—</span></div>
       <span class="reset" id="s-reset"></span>
     </div>
     <div class="g">
       <span class="glabel">weekly</span>
-      <canvas id="w-canvas" width="84" height="84"></canvas>
+      <div class="ring" id="w-ring"><span class="v" id="w-val">—</span></div>
       <span class="reset" id="w-reset"></span>
     </div>
   </div>
@@ -136,9 +158,7 @@ window.onerror = function(msg, src, line) {
   document.body.innerHTML = 'ERR line ' + line + ':<br>' + msg;
 };
 
-// ── canvas ring drawing ───────────────────────────────────────────────────────
-var TRACK = '#1a1916';
-
+// ── CSS ring drawing (vector-sharp, matches mockup) ───────────────────────────
 function ringColor(p) {
   if (p >= 90) return '#ff3b30';
   if (p >= 85) return '#ffb347';
@@ -146,41 +166,17 @@ function ringColor(p) {
   return '#46d6cf';
 }
 
-function drawRing(id, pct, color) {
-  var canvas = document.getElementById(id);
-  var ctx = canvas.getContext('2d');
-  var cx = 42, cy = 42, r = 33, lw = 8;
-
-  ctx.clearRect(0, 0, 84, 84);
-
-  // track (full circle)
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-  ctx.strokeStyle = TRACK;
-  ctx.lineWidth = lw;
-  ctx.stroke();
-
-  // progress arc
-  if (pct > 0) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (pct / 100) * 2 * Math.PI);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lw;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  }
-
-  // center label
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  if (pct >= 0) {
-    ctx.fillStyle = '#f4f2ee';
-    ctx.font = 'bold 19px monospace';
-    ctx.fillText(pct + '%', cx, cy);
-  } else {
-    ctx.fillStyle = '#6e6c66';
-    ctx.font = 'bold 22px monospace';
-    ctx.fillText('—', cx, cy);
+function setRing(id, pct, color) {
+  var el = document.getElementById(id);
+  var fill = (pct >= 0) ? pct : 0;
+  var col  = (pct >= 0) ? color : '#2a2926';
+  // Set background directly — no CSS custom properties needed
+  el.style.background = 'conic-gradient(' + col + ' ' + fill + '%, #2a2926 0)';
+  // Center label
+  var valEl = document.getElementById(id.replace('-ring', '-val'));
+  if (valEl) {
+    valEl.innerHTML = (pct >= 0) ? pct + '<small>%</small>' : '—';
+    valEl.style.color = (pct >= 0) ? color : '#9a9890';
   }
 }
 
@@ -212,14 +208,12 @@ function fmtMins(m) {
 // ── render ────────────────────────────────────────────────────────────────────
 function render(d) {
   var sOk = (d.s >= 0), wOk = (d.w >= 0);
-  var sc = sOk ? ringColor(d.s) : '#6e6c66';
-  var wc = wOk ? ringColor(d.w) : '#6e6c66';
 
-  drawRing('s-canvas', sOk ? d.s : -1, sc);
-  drawRing('w-canvas', wOk ? d.w : -1, wc);
+  setRing('s-ring', sOk ? d.s : -1, sOk ? ringColor(d.s) : '#9a9890');
+  setRing('w-ring', wOk ? d.w : -1, wOk ? ringColor(d.w) : '#9a9890');
 
-  document.getElementById('s-reset').innerHTML = (sOk && d.sr > 0) ? 'resets <b style="color:#f4f2ee">' + fmtMins(d.sr) + '</b>' : '';
-  document.getElementById('w-reset').innerHTML = (wOk && d.wr > 0) ? 'resets <b style="color:#f4f2ee">' + fmtMins(d.wr) + '</b>' : '';
+  document.getElementById('s-reset').innerHTML = (sOk && d.sr > 0) ? 'resets <b>' + fmtMins(d.sr) + '</b>' : '';
+  document.getElementById('w-reset').innerHTML = (wOk && d.wr > 0) ? 'resets <b>' + fmtMins(d.wr) + '</b>' : '';
 
   var max = Math.max(sOk ? d.s : 0, wOk ? d.w : 0);
   var pip, txt, stTxt, stColor;
