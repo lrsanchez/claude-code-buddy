@@ -15,6 +15,7 @@ data class ChatEntry(
 data class SessionInfo(
     val id: String = "",
     val short: String = "",
+    val name: String = "",   // human-readable name from /rename
     val running: Boolean = false,
     val waiting: Boolean = false,
     val tokens: Long = 0L,

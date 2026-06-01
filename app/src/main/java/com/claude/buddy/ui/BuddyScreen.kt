@@ -303,7 +303,12 @@ private fun SessionSelector(view: PanelView, C: BuddyColors) {
     ) {
         SessionTab("all", view.selected == null, false, C) { view.onSelect(null) }
         view.sessions.forEach { s ->
-            SessionTab(s.short, view.selected == s.id, s.waiting, C) { view.onSelect(s.id) }
+            SessionTab(
+                label    = s.name.ifEmpty { s.short }.take(16),
+                selected = view.selected == s.id,
+                waiting  = s.waiting,
+                C        = C,
+            ) { view.onSelect(s.id) }
         }
     }
 }
@@ -555,17 +560,11 @@ fun TokenMeter(
 
 @Composable
 fun ChatPanel(chat: List<ChatEntry>, C: BuddyColors = LocalBuddyColors.current, modifier: Modifier = Modifier) {
-    // chat is newest-first from daemon — reverse so oldest→newest, latest at bottom
-    val displayed = remember(chat) { chat.reversed() }
-    val listState = rememberLazyListState()
-    LaunchedEffect(displayed.size) {
-        if (displayed.isNotEmpty()) {
-            // scrollToItem is instant — no animation frame to cancel on rapid updates
-            listState.scrollToItem(displayed.size - 1)
-        }
-    }
+    // reverseLayout=true: item 0 (newest) sits at the bottom naturally.
+    // No explicit scroll needed — new messages appear at the bottom automatically.
+    // User scrolls UP to read history; layout handles the rest.
     Column(modifier = modifier) {
-        if (displayed.isEmpty()) {
+        if (chat.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     "Connected — start a Claude Code\nsession to see the conversation",
@@ -575,8 +574,12 @@ fun ChatPanel(chat: List<ChatEntry>, C: BuddyColors = LocalBuddyColors.current, 
                 )
             }
         } else {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                itemsIndexed(displayed, key = { _, entry -> entry.role + entry.text.take(40) }) { _, entry ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                reverseLayout = true,
+            ) {
+                items(chat, key = { entry -> entry.role + entry.text.take(40) }) { entry ->
                     ChatBubble(entry, C)
                 }
             }

@@ -113,6 +113,7 @@ class Session:
     tokens_today: int    = 0
     session_start_tokens: int = 0
     last_seen: float     = 0.0   # wall time of last hook activity (for TTL expiry)
+    name: str            = ""    # human-readable name from /rename
     pending: Optional[PendingPrompt] = None
     active_prompt: Optional[dict] = None  # kept in every snapshot while waiting
 
@@ -135,6 +136,30 @@ def _text(content) -> str:
                 return b.get("text","").strip()
     return ""
 
+_SESSIONS_DIR = os.path.expanduser("~/.claude/sessions")
+
+def _read_session_name(session_id: str) -> str:
+    """Read the human-readable session name from ~/.claude/sessions/<pid>.json.
+    Returns the best (non-empty) name when multiple PID files share the same sessionId."""
+    best = ""
+    try:
+        for fname in os.listdir(_SESSIONS_DIR):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(_SESSIONS_DIR, fname)) as f:
+                    data = json.load(f)
+                if data.get("sessionId") != session_id:
+                    continue
+                name = data.get("name", "").strip()
+                if name:
+                    best = name
+            except (OSError, json.JSONDecodeError):
+                pass
+    except OSError:
+        pass
+    return best
+
 def refresh_entries(session: Session):
     """Re-parse the transcript to rebuild tool entries and token count."""
     entries, tokens = [], 0
@@ -150,16 +175,19 @@ def refresh_entries(session: Session):
                 tokens += msg.get("usage", {}).get("output_tokens", 0)
                 for b in msg.get("content", []):
                     if not isinstance(b, dict) or b.get("type") != "tool_use": continue
-                    name = b.get("name","?")
+                    tool_name = b.get("name","?")
                     inp  = b.get("input",{})
                     hint = str(inp.get("command") or inp.get("file_path") or
                                inp.get("description") or inp.get("prompt") or "")[:60].replace("\n"," ")
                     ts_raw = obj.get("timestamp","")
                     ts = ts_raw[11:16] if len(ts_raw) >= 16 else time.strftime("%H:%M")
-                    entries.append(f"{ts} {name}" + (f": {hint}" if hint else ""))
+                    entries.append(f"{ts} {tool_name}" + (f": {hint}" if hint else ""))
     except (OSError, IOError): pass
-    session.entries      = list(reversed(entries))[:MAX_ENTRIES]
-    session.tokens       = tokens
+    session.entries = list(reversed(entries))[:MAX_ENTRIES]
+    session.tokens  = tokens
+    # Update name from the live sessions file (written by /rename)
+    name = _read_session_name(session.id)
+    if name: session.name = name
     session.tokens_today = max(0, tokens - session.session_start_tokens)
 
 def scan_chat(path: str, pos: int) -> tuple[list, int]:
@@ -358,6 +386,7 @@ class BuddyDaemon:
         per_session = [] if not multi else [{
             "id":      s.id,
             "short":   s.short_id,
+            "name":    s.name,
             "running": s.running,
             "waiting": s.waiting,
             "tokens":  s.tokens,
@@ -395,7 +424,7 @@ class BuddyDaemon:
                         # per-session chat (untagged — the panel header shows which)
                         session.chat.insert(0, dict(entry))
                         # global merged chat (tagged when multiple sessions)
-                        if multi: entry["session"] = session.short_id
+                        if multi: entry["session"] = session.name or session.short_id
                         self._global_chat.insert(0, entry)
                         who = "You" if e["role"]=="user" else "Claude"
                         icon = "CHAT_USER" if e["role"]=="user" else "CHAT_AI"
@@ -798,9 +827,61 @@ body{{background:radial-gradient(900px 400px at 70% -10%,#13110e 0,transparent 6
         })
 
 
+    def _sync_active_sessions(self):
+        """Discover running Claude Code sessions from ~/.claude/sessions/ and register
+        any that the daemon hasn't seen yet (e.g. sessions started before the daemon).
+        When the same sessionId appears in multiple PID files, prefer the one with a name."""
+        # Collect best entry per sessionId (non-empty name wins over empty)
+        best: dict = {}
+        try:
+            for fname in os.listdir(_SESSIONS_DIR):
+                if not fname.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(_SESSIONS_DIR, fname)) as f:
+                        data = json.load(f)
+                    sid = data.get("sessionId", "")
+                    if not sid:
+                        continue
+                    name = data.get("name", "").strip()
+                    # Replace existing entry only if this one has a name and previous doesn't
+                    if sid not in best or (name and not best[sid].get("name", "").strip()):
+                        best[sid] = data
+                except (OSError, json.JSONDecodeError, KeyError):
+                    pass
+        except OSError:
+            pass
+
+        for sid, data in best.items():
+            # Update name on already-tracked sessions too
+            name = data.get("name", "").strip()
+            if sid in self._sessions:
+                if name:
+                    self._sessions[sid].name = name
+                continue
+            cwd = data.get("cwd", "")
+            if not cwd:
+                continue
+            transcript = os.path.expanduser(
+                f"~/.claude/projects/{cwd.replace('/', '-')}/{sid}.jsonl"
+            )
+            if not os.path.exists(transcript):
+                continue
+            s = self._get_session(sid, transcript)
+            if name:
+                s.name = name
+            _log("SESSION", f"Discovered session {BOLD}{s.short_id}{R}"
+                 + (f" · {name}" if name else ""))
+
     async def _route_status(self, request):
         """Full session snapshot + meter — polled by the Android app every 3 s."""
         await self._require_auth(request)
+        # Auto-discover sessions started before the daemon / before hooks fired
+        self._sync_active_sessions()
+        # Refresh entries so session names (/rename) and tokens stay current
+        for s in self._sessions.values():
+            if s.transcript_path:
+                refresh_entries(s)
         snap = self._aggregate()
         active = next((s.active_prompt for s in self._sessions.values() if s.active_prompt), None)
         if active:
