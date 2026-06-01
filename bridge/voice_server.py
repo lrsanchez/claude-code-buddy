@@ -232,8 +232,12 @@ body{{background:#070708;color:#f4f2ee;font-family:ui-monospace,monospace;
 
     async def route_ask(self, request):
         await self._require_auth(request)
-        result = await self._voice.handle_ask(request)
-        return aweb.json_response(result)
+        try:
+            result = await self._voice.handle_ask(request)
+            return aweb.json_response(result)
+        except Exception as e:
+            log.exception(f"route_ask unhandled error: {e}")
+            return aweb.json_response({"ok": False, "error": "server error"}, status=500)
 
     # ── main ──────────────────────────────────────────────────────────────────
 

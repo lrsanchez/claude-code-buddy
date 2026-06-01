@@ -113,7 +113,7 @@ class VoiceHandler:
             return reply
 
         except Exception as e:
-            log.debug(f"OpenRouter error: {e}")
+            log.warning(f"OpenRouter error: {e}")
             return "Sorry, I couldn't reach the model right now."
 
     # ── Route handler ─────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ class VoiceHandler:
         except ImportError:
             log.warning("edge-tts not installed — run: pip install edge-tts")
         except Exception as e:
-            log.debug(f"TTS error: {e}")
+            log.warning(f"TTS error: {e}")
         return None
 
     async def handle_ask(self, request) -> dict:
