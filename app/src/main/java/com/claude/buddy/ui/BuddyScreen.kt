@@ -513,7 +513,7 @@ private fun UsageRing(pct: Int, resetMin: Int, label: String, C: BuddyColors) {
                 val inset  = stroke / 2f
                 val sz     = Size(size.width - stroke, size.height - stroke)
                 val tl     = Offset(inset, inset)
-                drawArc(C.card, -90f, 360f, false, topLeft = tl, size = sz,
+                drawArc(C.ringTrack, -90f, 360f, false, topLeft = tl, size = sz,
                     style = Stroke(stroke, cap = StrokeCap.Round))
                 if (sweep > 0f)
                     drawArc(color, -90f, sweep * 360f, false, topLeft = tl, size = sz,
@@ -566,7 +566,7 @@ fun TokenMeter(
         Box(contentAlignment = Alignment.Center) {
             Canvas(Modifier.size(44.dp)) {
                 val s = 4.dp.toPx()
-                drawArc(C.card, -90f, 360f, false, style = Stroke(s, cap = StrokeCap.Round))
+                drawArc(C.ringTrack, -90f, 360f, false, style = Stroke(s, cap = StrokeCap.Round))
                 drawArc(C.coral, -90f, animProg * 360f, false, style = Stroke(s, cap = StrokeCap.Round))
             }
             Text("L$level", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = C.coral)

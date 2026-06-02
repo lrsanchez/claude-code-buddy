@@ -19,6 +19,7 @@ data class BuddyColors(
     val background: Color,
     val surface: Color,
     val card: Color,
+    val ringTrack: Color,     // gauge ring background arc
     val textPrimary: Color,
     val textSecondary: Color,
     val divider: Color,
@@ -36,6 +37,7 @@ val DarkBuddyColors = BuddyColors(
     background  = Color(0xFF000000),
     surface     = Color(0xFF0D0D0D),
     card        = Color(0xFF1A1A1A),
+    ringTrack   = Color(0xFF1A1A1A),
     textPrimary = Color(0xFFF0F0F0),
     textSecondary = Color(0xFF888888),
     divider     = Color(0xFF2A2A2A),
@@ -53,6 +55,7 @@ val LightBuddyColors = BuddyColors(
     background  = Color(0xFFFFFFFF),
     surface     = Color(0xFFF8F8F8),
     card        = Color(0xFFEEEEEE),
+    ringTrack   = Color(0xFFAAAAAA),  // clearly visible track on white / e-ink
     textPrimary = Color(0xFF1A1A1A),
     textSecondary = Color(0xFF555555),
     divider     = Color(0xFFCCCCCC),
