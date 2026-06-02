@@ -93,6 +93,14 @@ class BuddyService : Service() {
         }
     }
 
+    fun clearChat() {
+        val st = stateManager.state.value
+        if (!st.isConfigured) return
+        scope.launch {
+            BuddyHttpClient(st.daemonUrl, st.daemonToken).clearChat()
+        }
+    }
+
     fun reconnect() {
         lastSuccessMs = 0
         startPolling()

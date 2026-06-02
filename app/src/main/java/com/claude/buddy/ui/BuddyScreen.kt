@@ -59,6 +59,7 @@ fun BuddyScreen(
     onToggleTheme: () -> Unit = {},
     onReconnect: () -> Unit = {},
     onToggleAutoApprove: () -> Unit = {},
+    onClearChat: () -> Unit = {},
 ) {
     val cfg = LocalConfiguration.current
     val isLandscape = cfg.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -81,9 +82,9 @@ fun BuddyScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(C.background)) {
         if (isLandscape) {
-            LandscapeLayout(state, C, activePanel, onToggleTheme, onToggleAutoApprove, onReconnect, onPanelToggle, view)
+            LandscapeLayout(state, C, activePanel, onToggleTheme, onToggleAutoApprove, onClearChat, onReconnect, onPanelToggle, view)
         } else {
-            PortraitLayout(state, C, activePanel, onToggleTheme, onToggleAutoApprove, onReconnect, onPanelToggle, view)
+            PortraitLayout(state, C, activePanel, onToggleTheme, onToggleAutoApprove, onClearChat, onReconnect, onPanelToggle, view)
         }
         AnimatedVisibility(
             visible = state.displayState == BuddyDisplayState.APPROVAL && !state.autoApprove,
@@ -101,7 +102,7 @@ fun BuddyScreen(
 private fun LandscapeLayout(
     state: BuddyUiState, C: BuddyColors,
     activePanel: ActivePanel, onToggleTheme: () -> Unit, onToggleAutoApprove: () -> Unit,
-    onReconnect: () -> Unit, onPanel: () -> Unit, view: PanelView,
+    onClearChat: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit, view: PanelView,
 ) {
     Row(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Column(
@@ -109,7 +110,7 @@ private fun LandscapeLayout(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            TopBar(state, C, onToggleTheme, onToggleAutoApprove)
+            TopBar(state, C, onToggleTheme, onToggleAutoApprove, onClearChat)
             Spacer(Modifier.height(12.dp))
             BuddyCharacter(state.displayState, C, modifier = Modifier.size(160.dp))
             Spacer(Modifier.height(8.dp))
@@ -155,13 +156,13 @@ private fun LandscapeLayout(
 private fun PortraitLayout(
     state: BuddyUiState, C: BuddyColors,
     activePanel: ActivePanel, onToggleTheme: () -> Unit, onToggleAutoApprove: () -> Unit,
-    onReconnect: () -> Unit, onPanel: () -> Unit, view: PanelView,
+    onClearChat: () -> Unit, onReconnect: () -> Unit, onPanel: () -> Unit, view: PanelView,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TopBar(state, C, onToggleTheme, onToggleAutoApprove)
+        TopBar(state, C, onToggleTheme, onToggleAutoApprove, onClearChat)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -223,6 +224,7 @@ fun TopBar(
     C: BuddyColors = LocalBuddyColors.current,
     onToggleTheme: () -> Unit = {},
     onToggleAutoApprove: () -> Unit = {},
+    onClearChat: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -258,6 +260,15 @@ fun TopBar(
                 )
             }
             Text(text = state.deviceName, style = MaterialTheme.typography.labelSmall, color = C.coralDim)
+            Text(
+                text = "⌫",
+                fontSize = 13.sp,
+                color = C.textSecondary,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(onClick = onClearChat)
+                    .padding(4.dp),
+            )
             Text(
                 text = if (C.isLight) "☾" else "☀",
                 fontSize = 14.sp,

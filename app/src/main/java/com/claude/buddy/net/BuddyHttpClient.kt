@@ -57,6 +57,20 @@ class BuddyHttpClient(private val baseUrl: String, private val token: String) {
         }
     }
 
+    suspend fun clearChat(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val conn = openJson("/clear-chat")
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.outputStream.write("{}".toByteArray())
+            conn.responseCode == 200
+        } catch (e: Exception) {
+            Log.d(TAG, "clearChat: ${e.message}")
+            false
+        }
+    }
+
     suspend fun fetchAutoToken(): String? = withContext(Dispatchers.IO) {
         try {
             val conn = URL("${baseUrl}/auto-token").openConnection() as HttpURLConnection

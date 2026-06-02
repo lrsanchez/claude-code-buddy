@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
                         onToggleTheme        = { service.stateManager.toggleTheme() },
                         onReconnect          = { service.reconnect() },
                         onToggleAutoApprove  = { service.stateManager.toggleAutoApprove() },
+                        onClearChat          = { service.clearChat() },
                     )
                 } else {
                     BuddyScreen(state = state, onApprove = {}, onDeny = {})

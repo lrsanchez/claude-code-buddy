@@ -911,6 +911,18 @@ body{{background:radial-gradient(900px 400px at 70% -10%,#13110e 0,transparent 6
                 return aweb.json_response({"ok": True})
         return aweb.json_response({"ok": False, "error": "prompt not found"}, status=404)
 
+    async def _route_clear_chat(self, request):
+        """Clear all in-memory chat history (does not touch transcript files)."""
+        await self._require_auth(request)
+        self._global_chat.clear()
+        for s in self._sessions.values():
+            s.chat.clear()
+            # Advance transcript_pos so we don't re-read old messages
+            if s.transcript_path and os.path.exists(s.transcript_path):
+                s.transcript_pos = os.path.getsize(s.transcript_path)
+        _log("CHAT", "Chat history cleared")
+        return aweb.json_response({"ok": True})
+
     # ── Voice routes ──────────────────────────────────────────────────────────
 
     async def _route_voice(self, request):
@@ -988,6 +1000,7 @@ body{{background:#070708;color:#f4f2ee;font-family:ui-monospace,monospace;
         app.router.add_get( "/meter",      self._route_meter)
         app.router.add_get( "/status",     self._route_status)
         app.router.add_post("/decision",   self._route_decision)
+        app.router.add_post("/clear-chat", self._route_clear_chat)
         # Voice creation
         app.router.add_get( "/voice",    self._route_voice)
         app.router.add_get( "/voice/qr", self._route_voice_qr)
