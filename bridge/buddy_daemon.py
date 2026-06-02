@@ -319,7 +319,8 @@ class BuddyDaemon:
                     s = Session(id=sid, short_id=short, transcript_path=path)
                     s.last_seen = mtime
                     refresh_entries(s)
-                    s.session_start_tokens = 0
+                    s.session_start_tokens = s.tokens  # baseline at restore so tokens_today starts at 0
+                    s.tokens_today = 0
                     self._sessions[sid] = s
                     _log("SESSION", f"Restored session {BOLD}{short}{R} from cache")
         except (OSError, json.JSONDecodeError, KeyError):
