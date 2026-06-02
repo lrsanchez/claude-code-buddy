@@ -22,12 +22,19 @@ WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
 MAX_HISTORY        = 8    # message pairs kept per session
 MAX_TOKENS         = 150  # keep replies short — they're spoken aloud
 
-TTS_VOICE = os.environ.get("TTS_VOICE", "en-US-AriaNeural")
+TTS_VOICE_EN = os.environ.get("TTS_VOICE",    "en-US-AriaNeural")
+TTS_VOICE_PT = os.environ.get("TTS_VOICE_PT", "pt-BR-FranciscaNeural")
 
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_EN = (
     "You are a helpful voice assistant. Your replies are spoken aloud — keep them brief "
     "and conversational. No markdown, no bullet points, no numbered lists. "
     "Answer in 1-3 sentences unless more detail is explicitly asked for."
+)
+SYSTEM_PROMPT_PT = (
+    "Você é um assistente de voz útil. Suas respostas são faladas em voz alta — seja breve "
+    "e conversacional. Sem markdown, sem listas. "
+    "Responda em 1-3 frases, a menos que mais detalhes sejam explicitamente solicitados. "
+    "Responda sempre em português."
 )
 
 
@@ -61,13 +68,13 @@ class VoiceHandler:
         finally:
             self._loading = False
 
-    def _transcribe_sync(self, path: str) -> str:
+    def _transcribe_sync(self, path: str, lang: str = "en") -> str:
         if self._whisper is None:
             return ""
         try:
             segments, _ = self._whisper.transcribe(
                 path,
-                language="en",
+                language=lang,
                 vad_filter=True,
                 beam_size=1,
             )
@@ -78,14 +85,15 @@ class VoiceHandler:
 
     # ── OpenRouter ────────────────────────────────────────────────────────────
 
-    async def _chat(self, session_id: str, user_text: str) -> str:
+    async def _chat(self, session_id: str, user_text: str, lang: str = "en") -> str:
         if not OPENROUTER_KEY:
             return "Please set the OPENROUTER_KEY environment variable to enable voice."
 
         history = self._sessions.get(session_id, [])
         history.append({"role": "user", "content": user_text})
 
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-(MAX_HISTORY * 2):]
+        system = SYSTEM_PROMPT_PT if lang == "pt" else SYSTEM_PROMPT_EN
+        messages = [{"role": "system", "content": system}] + history[-(MAX_HISTORY * 2):]
 
         try:
             import aiohttp
@@ -118,12 +126,13 @@ class VoiceHandler:
 
     # ── Route handler ─────────────────────────────────────────────────────────
 
-    async def _tts(self, text: str) -> Optional[str]:
+    async def _tts(self, text: str, lang: str = "en") -> Optional[str]:
         """Generate speech via edge-tts; return base64 MP3 or None on failure."""
         try:
             import io, base64
             import edge_tts
-            communicate = edge_tts.Communicate(text, TTS_VOICE)
+            voice = TTS_VOICE_PT if lang == "pt" else TTS_VOICE_EN
+            communicate = edge_tts.Communicate(text, voice)
             buf = io.BytesIO()
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
@@ -148,6 +157,7 @@ class VoiceHandler:
         audio_bytes = b""
         session_id  = "default"
 
+        lang = "en"
         try:
             reader = await request.multipart()
             async for field in reader:
@@ -156,6 +166,11 @@ class VoiceHandler:
                 elif field.name == "session_id":
                     raw = await field.read()
                     session_id = raw.decode("utf-8", errors="replace").strip() or "default"
+                elif field.name == "lang":
+                    raw = await field.read()
+                    val = raw.decode("utf-8", errors="replace").strip().lower()
+                    if val in ("en", "pt"):
+                        lang = val
         except Exception as e:
             log.debug(f"multipart read error: {e}")
             return {"ok": False, "error": "failed to read audio"}
@@ -169,7 +184,7 @@ class VoiceHandler:
         tmp.close()
 
         loop = asyncio.get_event_loop()
-        transcript = await loop.run_in_executor(None, self._transcribe_sync, tmp.name)
+        transcript = await loop.run_in_executor(None, self._transcribe_sync, tmp.name, lang)
 
         import os as _os
         _os.unlink(tmp.name)
@@ -177,10 +192,10 @@ class VoiceHandler:
         if not transcript:
             return {"ok": False, "error": "no speech detected", "transcript": ""}
 
-        log.info(f"Voice [{session_id[:8]}]: \"{transcript[:80]}\"")
-        reply = await self._chat(session_id, transcript)
+        log.info(f"Voice [{session_id[:8]}] [{lang}]: \"{transcript[:80]}\"")
+        reply = await self._chat(session_id, transcript, lang)
         result: dict = {"ok": True, "text": reply, "transcript": transcript}
-        audio = await self._tts(reply)
+        audio = await self._tts(reply, lang)
         if audio:
             result["audio"] = audio
         return result

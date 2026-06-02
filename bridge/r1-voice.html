@@ -169,6 +169,7 @@ html, body {
   <div class="top">
     <span class="st" id="v-st">ready</span>
     <div style="display:flex;gap:5px;align-items:center">
+      <span id="lang-btn" class="mdl" onclick="toggleLang()" style="cursor:pointer;-webkit-tap-highlight-color:transparent" title="toggle language"></span>
       <span id="tts-btn" class="mdl" onclick="toggleTts()" style="cursor:pointer;-webkit-tap-highlight-color:transparent" title="toggle voice"></span>
       <span class="mdl">via <b id="v-model">gemini</b></span>
     </div>
@@ -259,6 +260,7 @@ function storageSet(d) {
 // ── state ─────────────────────────────────────────────────────────────────────
 var token      = storageGet().token || null;
 var sessionId  = storageGet().sessionId || null;
+var lang       = storageGet().lang || 'en';
 
 if (!sessionId) {
   sessionId = 'v' + Math.random().toString(36).slice(2, 10);
@@ -332,6 +334,22 @@ function beep(freq, dur, vol) {
 function beepStart()   { beep(440, 0.09); }                                           // low — recording
 function beepSent()    { beep(660, 0.07); }                                           // mid — sent
 function beepReady()   { beep(880, 0.06); setTimeout(function(){beep(1100,0.06);},75); } // double — reply
+
+// ── Language toggle ───────────────────────────────────────────────────────────
+function toggleLang() {
+  lang = (lang === 'en') ? 'pt' : 'en';
+  var s = storageGet(); s.lang = lang; storageSet(s);
+  renderLangBtn();
+}
+
+function renderLangBtn() {
+  var el = document.getElementById('lang-btn');
+  if (!el) return;
+  var isPt = lang === 'pt';
+  el.textContent      = isPt ? 'PT' : 'EN';
+  el.style.color      = isPt ? '#4fc3f7' : '#6e6c66';
+  el.style.borderColor = isPt ? '#4fc3f7' : '#1c1b19';
+}
 
 // ── TTS ───────────────────────────────────────────────────────────────────────
 var ttsEnabled = true;
@@ -435,6 +453,7 @@ function sendAudio(blob) {
   var fd = new FormData();
   fd.append('audio', blob, 'audio.webm');
   fd.append('session_id', sessionId);
+  fd.append('lang', lang);
   fetch('/ask', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd })
     .then(function(r) {
       if (r.status === 401 || r.status === 403) { token = null; storageSet({ sessionId: sessionId }); showPair(); busy = false; return null; }
@@ -580,10 +599,12 @@ document.addEventListener('keydown', function(e) {
 
 // ── boot ──────────────────────────────────────────────────────────────────────
 document.getElementById('v-model').textContent = MODEL_LABEL;
-// Restore TTS preference
+// Restore preferences
 var _stored = storageGet();
 ttsEnabled = (_stored.ttsEnabled !== undefined) ? _stored.ttsEnabled : true;
+lang = _stored.lang || 'en';
 renderTtsBtn();
+renderLangBtn();
 function boot() {
   if (token) { showVoice(); return; }
   fetch('/auto-token')
