@@ -597,7 +597,7 @@ fun ChatPanel(chat: List<ChatEntry>, C: BuddyColors = LocalBuddyColors.current, 
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 reverseLayout = true,
             ) {
-                items(chat, key = { entry -> entry.role + entry.text.take(40) }) { entry ->
+                itemsIndexed(chat, key = { index, entry -> "$index-${entry.role}-${entry.text.take(20)}" }) { _, entry ->
                     ChatBubble(entry, C)
                 }
             }
