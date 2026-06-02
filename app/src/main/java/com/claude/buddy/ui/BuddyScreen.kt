@@ -544,14 +544,25 @@ fun TokenMeter(
     C: BuddyColors = LocalBuddyColors.current,
 ) {
     val hasMeter = sessionPct >= 0 || weeklyPct >= 0
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    val prog = (tokensToday % 50_000) / 50_000f
+    val animProg by animateFloatAsState(prog, tween(800), label = "arc")
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Left group — API quota rings
         if (hasMeter) {
             UsageRing(sessionPct, sessionResetMin, "session", C)
+            Spacer(Modifier.width(10.dp))
             UsageRing(weeklyPct, weeklyResetMin, "weekly", C)
         }
-        // Level arc
-        val prog = (tokensToday % 50_000) / 50_000f
-        val animProg by animateFloatAsState(prog, tween(800), label = "arc")
+        Spacer(Modifier.weight(1f))
+        // Right group — personal progress
+        Column(horizontalAlignment = Alignment.End) {
+            Text(formatTokens(tokensToday), fontSize = 18.sp, fontFamily = FontFamily.Monospace, color = C.textPrimary)
+            Text("today  ·  ${formatTokens(tokens)} total", style = MaterialTheme.typography.labelSmall, color = C.textSecondary)
+        }
+        Spacer(Modifier.width(8.dp))
         Box(contentAlignment = Alignment.Center) {
             Canvas(Modifier.size(44.dp)) {
                 val s = 4.dp.toPx()
@@ -559,10 +570,6 @@ fun TokenMeter(
                 drawArc(C.coral, -90f, animProg * 360f, false, style = Stroke(s, cap = StrokeCap.Round))
             }
             Text("L$level", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = C.coral)
-        }
-        Column {
-            Text(formatTokens(tokensToday), fontSize = 18.sp, fontFamily = FontFamily.Monospace, color = C.textPrimary)
-            Text("today  ·  ${formatTokens(tokens)} total", style = MaterialTheme.typography.labelSmall, color = C.textSecondary)
         }
     }
 }
