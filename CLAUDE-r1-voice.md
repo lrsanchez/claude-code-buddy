@@ -38,7 +38,7 @@ put the intelligence in the backend.
    │   • STT  (Whisper / Deepgram)               │
    │   • OpenRouter (model configurable) + history│
    │   • returns reply text (+ optional TTS)     │
-   │   exposed via Cloudflare Tunnel / TS Funnel │
+   │   exposed via Pinggy tunnel (HTTPS)       │
    └──────────────────────────────────────────┘
 ```
 
@@ -86,8 +86,8 @@ the URL, so bump a `?v=` query param to push updates.
   voice is ElevenLabs, so it'll feel native); return audio for the creation to play.
 - **Memory:** keep per-session history server-side keyed by a session id the creation
   generates on first launch (store it in `creationStorage`).
-- **Auth + exposure:** front it with Cloudflare Tunnel (custom domain) or Tailscale Funnel
-  (both give HTTPS). Neither tunnel authenticates on its own — auth is the **pairing-issued
+- **Auth + exposure:** front it with a Pinggy tunnel (HTTPS, custom domain supported)
+  The tunnel does not authenticate on its own — auth is the **pairing-issued
   device token** below; the creation sends `Authorization: Bearer <token>` on every request.
 
 ## Pairing & auth (first run)
@@ -156,7 +156,7 @@ PTT release, use a fast STT and a fast model, cap reply length. Show the
 2. **TTS:** device SDK speech vs backend ElevenLabs/Cartesia (simplicity vs voice quality).
 3. **OpenRouter model:** which model id as default (latency vs quality for spoken replies),
    and whether to expose a quick in-creation model switcher.
-4. **Exposure:** Cloudflare Tunnel vs Tailscale Funnel (both HTTPS; auth is the pairing
+4. **Exposure:** Pinggy tunnel (HTTPS; auth is the pairing
    token, not the tunnel).
 5. **History depth:** how many turns to keep in context for a voice session.
 6. **Pairing details:** how to open the window (CLI command vs code logged on boot), code

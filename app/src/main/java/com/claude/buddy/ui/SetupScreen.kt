@@ -63,7 +63,7 @@ fun SetupScreen(onConfigured: (url: String, token: String) -> Unit) {
                 textAlign = TextAlign.Center,
             )
             Text(
-                "Enter your daemon URL\n(Tailscale or local network)",
+                "Enter your daemon URL\n(Pinggy or local network)",
                 style = MaterialTheme.typography.bodyLarge,
                 color = C.textSecondary,
                 textAlign = TextAlign.Center,

@@ -733,7 +733,7 @@ class BuddyDaemon:
         return aweb.Response(text=html, content_type="text/html")
 
     async def _route_qr(self, request):
-        # Detect scheme — Tailscale Funnel injects X-Forwarded-Proto: https
+        # Detect scheme — Pinggy injects X-Forwarded-Proto: https
         proto = request.headers.get("X-Forwarded-Proto", "http")
         host  = (request.headers.get("X-Forwarded-Host")
                  or request.headers.get("Host")
@@ -780,13 +780,13 @@ body{{background:radial-gradient(900px 400px at 70% -10%,#13110e 0,transparent 6
   <div style="text-align:center">
     <div class="kick">rabbit r1 · creation</div>
     <div class="title">install <em>/ usage meter</em></div>
-    <div class="sub">scan with your r1 to install.<br>must be accessed via your <b>Tailscale URL</b> for the QR to encode the right address.</div>
+    <div class="sub">scan with your r1 to install.<br>must be accessed via your <b>Pinggy URL</b> for the QR to encode the right address.</div>
   </div>
   <div class="qr-frame">{svg}</div>
   <div class="url-box">{payload}</div>
   <div class="divider"></div>
   <div class="steps">
-    <div class="step"><span class="n">1</span><span>Run <b>tailscale funnel 7700</b>, then open this page via your Tailscale URL — not localhost.</span></div>
+    <div class="step"><span class="n">1</span><span>Run <b>./start-buddy.sh</b> (starts a Pinggy tunnel), then open this page via your Pinggy URL — not localhost.</span></div>
     <div class="step"><span class="n">2</span><span>On the r1: <b>Settings → Creations → Install</b> and scan the QR above.</span></div>
     <div class="step"><span class="n">3</span><span>First launch shows the <b>pair</b> screen — enter the 6-digit code from the daemon logs using the scroll wheel.</span></div>
   </div>
@@ -798,7 +798,8 @@ body{{background:radial-gradient(900px 400px at 70% -10%,#13110e 0,transparent 6
     async def _route_auto_token(self, request):
         """Return the pre-shared BUDDY_TOKEN so creations can self-pair silently.
         Only useful when BUDDY_TOKEN is set in .env — returns 404 otherwise.
-        Unprotected by design: it's behind Tailscale so only the owner can reach it."""
+        Unprotected by design: the Pinggy URL is public but unguessable, so
+        anyone who has the URL is assumed to be the owner."""
         if not BUDDY_TOKEN:
             return aweb.Response(status=404)
         return aweb.json_response({"token": BUDDY_TOKEN})
@@ -969,7 +970,7 @@ body{{background:#070708;color:#f4f2ee;font-family:ui-monospace,monospace;
   <div class="qr">{svg}</div>
   <div class="url">{creation_url}</div>
   <div class="note">
-    Open this page via your <b>Tailscale URL</b> so the QR encodes the right address.<br>
+    Open this page via your <b>Pinggy URL</b> so the QR encodes the right address.<br>
     Delete the old voice creation first, then scan.<br>
     A new pairing code is shown in the daemon logs (SIGUSR1 to refresh).
   </div>

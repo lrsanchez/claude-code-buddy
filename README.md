@@ -48,7 +48,7 @@ Claude Code CLI  ──hooks──▶  bridge/buddy_daemon.py  ──HTTP──�
                               │  GET /auto-token │  ← silent pairing
                               └─────────────────┘
                                       │
-                               Tailscale Funnel
+                                Pinggy tunnel
                                       │
                               Rabbit R1 creations
 ```
@@ -78,7 +78,7 @@ Designed for **Android gaming tablets** (RedMagic Nova/Astra, Razer Edge) and **
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On first launch, enter your daemon URL (e.g. `https://hostname.ts.net`). The app auto-pairs via `/auto-token` — no pairing code needed if `BUDDY_TOKEN` is set in `.env`.
+On first launch, enter your daemon URL (e.g. `https://yoursubdomain.a.pinggy.link`). The app auto-pairs via `/auto-token` — no pairing code needed if `BUDDY_TOKEN` is set in `.env`.
 
 ### 2 — Bridge daemon (local machine)
 
@@ -89,7 +89,7 @@ Requires Python 3.9+.
 ./bridge/start-buddy.sh
 ```
 
-The script auto-installs dependencies, starts a Tailscale Funnel on port 7700, and prints the public URL + pairing code.
+The script auto-installs dependencies, starts a [Pinggy](https://pinggy.io) tunnel on port 7700 (via ssh), and prints the public URL + pairing code. Without a `PINGGY_TOKEN` it uses the free tier: a random URL that rotates and a tunnel that expires after ~60 min. With a Pinggy Pro token you get a persistent URL that survives restarts.
 
 **`.env`** (create in `bridge/`, never committed):
 ```bash
@@ -97,6 +97,8 @@ OPENROUTER_KEY=sk-or-v1-...
 BUDDY_TOKEN=your-random-token-here   # shared between daemon and all clients
 TTS_VOICE=en-US-AriaNeural
 VOICE_MODEL=perplexity/sonar
+PINGGY_TOKEN=your-pinggy-token       # optional — Pinggy Pro, persistent URL
+PINGGY_URL=https://your-domain       # optional — pin the public URL (custom domain)
 ```
 
 ### 3 — Claude Code hooks
@@ -116,7 +118,7 @@ python3 bridge/setup-hooks.py --remove
 
 ### 4 — R1 creations
 
-With the daemon running and Tailscale Funnel active:
+With the daemon running and the Pinggy tunnel active:
 
 | Creation | QR page |
 |----------|---------|

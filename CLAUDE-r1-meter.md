@@ -16,7 +16,7 @@ poller, alongside the hook ingest that feeds `/status`.
 One daemon:
   hook ingest  ──▶ state ──▶ GET /status, POST /decision   (event-driven)
   60s poller   ──▶ cache ──▶ GET /meter                     (poll-driven)
-  all behind the same Tunnel/Funnel + pairing token
+  all behind the same Pinggy tunnel + pairing token
 ```
 
 ## Data source (the ClawdMeter method)
