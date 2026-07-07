@@ -28,3 +28,5 @@ bridge/__pycache__/
 # Kotlin session files
 .kotlin/
 bridge/.pinggy.log
+bridge/.pinggy_key
+bridge/.pinggy_key.pub

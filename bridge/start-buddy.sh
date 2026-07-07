@@ -34,10 +34,18 @@ if command -v ssh &>/dev/null; then
         PINGGY_HOST="${PINGGY_SERVER:-a.pinggy.io}"
     fi
 
+    # Dedicated passphrase-less key — Pinggy accepts any key; this keeps ssh
+    # fully non-interactive (no passphrase/password prompt from personal keys)
+    PINGGY_KEY="$SCRIPT_DIR/.pinggy_key"
+    [ -f "$PINGGY_KEY" ] || ssh-keygen -q -t ed25519 -f "$PINGGY_KEY" -N "" -C "claude-buddy-pinggy"
+
     # Kill any stale tunnel left over from a previous run
     pkill -f "R0:localhost:$HTTP_PORT.*pinggy\.io" 2>/dev/null || true
 
     ssh -p 443 \
+        -i "$PINGGY_KEY" \
+        -o IdentitiesOnly=yes \
+        -o BatchMode=yes \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
         -o ServerAliveInterval=30 \
