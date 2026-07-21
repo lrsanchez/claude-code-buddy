@@ -39,26 +39,47 @@ if command -v ssh &>/dev/null; then
     PINGGY_KEY="$SCRIPT_DIR/.pinggy_key"
     [ -f "$PINGGY_KEY" ] || ssh-keygen -q -t ed25519 -f "$PINGGY_KEY" -N "" -C "claude-buddy-pinggy"
 
-    # Kill any stale tunnel left over from a previous run
+    # Kill any stale supervisor/tunnel left over from a previous run
+    PINGGY_PID_FILE="$SCRIPT_DIR/.pinggy.pid"
+    if [ -f "$PINGGY_PID_FILE" ]; then
+        kill -- -"$(cat "$PINGGY_PID_FILE")" 2>/dev/null || true
+        rm -f "$PINGGY_PID_FILE"
+    fi
     pkill -f "R0:localhost:$HTTP_PORT.*pinggy\.io" 2>/dev/null || true
 
-    ssh -p 443 \
-        -i "$PINGGY_KEY" \
-        -o IdentitiesOnly=yes \
-        -o BatchMode=yes \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o ServerAliveInterval=30 \
-        -o ExitOnForwardFailure=yes \
-        -R0:localhost:"$HTTP_PORT" "$PINGGY_HOST" \
-        > "$PINGGY_LOG" 2>&1 &
+    # Supervisor loop: a shaky connection drops the ssh tunnel — keepalives
+    # (15 s × 2) detect the dead link fast, then we reconnect until killed.
+    # setsid forks, so the supervisor writes its own PID (its process-group id).
+    setsid bash -c '
+        LOG="$1"; KEY="$2"; PORT="$3"; HOST="$4"; PID_FILE="$5"
+        echo $$ > "$PID_FILE"
+        while true; do
+            : > "$LOG"
+            ssh -p 443 \
+                -i "$KEY" \
+                -o IdentitiesOnly=yes \
+                -o BatchMode=yes \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ServerAliveInterval=15 \
+                -o ServerAliveCountMax=2 \
+                -o ConnectTimeout=10 \
+                -o ExitOnForwardFailure=yes \
+                -R0:localhost:"$PORT" "$HOST" >> "$LOG" 2>&1
+            echo "tunnel dropped ($(date)) — reconnecting in 5 s…" >> "$LOG"
+            sleep 5
+        done
+    ' pinggy-supervisor "$PINGGY_LOG" "$PINGGY_KEY" "$HTTP_PORT" "$PINGGY_HOST" "$PINGGY_PID_FILE" &
 
     # Public URL: pinned via PINGGY_URL (custom domain), otherwise parse the
     # https URL that Pinggy prints on connect
     PG_URL="$PINGGY_URL"
     if [ -z "$PG_URL" ]; then
         for _ in $(seq 1 20); do
-            PG_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy\.link' "$PINGGY_LOG" 2>/dev/null | head -n1)
+            # First https URL Pinggy prints (domains vary by tier); skip the
+            # dashboard link in the free-tier upsell line
+            PG_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+' "$PINGGY_LOG" 2>/dev/null \
+                     | grep -vi 'dashboard\.pinggy' | head -n1)
             [ -n "$PG_URL" ] && break
             sleep 0.5
         done
@@ -83,4 +104,13 @@ else
     echo "  ssh not found — skipping Pinggy tunnel (expose manually if needed)"
 fi
 
-exec python3 "$SCRIPT_DIR/buddy_daemon.py" "$@"
+# Stop the tunnel supervisor when the daemon exits (Ctrl-C included)
+cleanup() {
+    if [ -f "${PINGGY_PID_FILE:-}" ]; then
+        kill -- -"$(cat "$PINGGY_PID_FILE")" 2>/dev/null || true
+        rm -f "$PINGGY_PID_FILE"
+    fi
+}
+trap cleanup EXIT
+
+python3 "$SCRIPT_DIR/buddy_daemon.py" "$@"
