@@ -30,3 +30,6 @@ bridge/__pycache__/
 bridge/.pinggy.log
 bridge/.pinggy_key
 bridge/.pinggy_key.pub
+bridge/.timesgate.log
+bridge/.pinggy.pid
+bridge/.beeper_token.json

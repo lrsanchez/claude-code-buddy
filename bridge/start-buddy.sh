@@ -104,12 +104,28 @@ else
     echo "  ssh not found — skipping Pinggy tunnel (expose manually if needed)"
 fi
 
-# Stop the tunnel supervisor when the daemon exits (Ctrl-C included)
+# ── Divoom Times Gate widget (optional) ───────────────────────────────────────
+# Set TIMESGATE_TOKEN in .env (LocalToken from the Divoom app) to push the
+# usage meter to a Times Gate screen. See timesgate_widget.py for options.
+TIMESGATE_WIDGET_PID=""
+if [ -n "$TIMESGATE_TOKEN" ]; then
+    if ! python3 -c "import PIL" 2>/dev/null; then
+        echo "Installing pillow..."
+        python3 -m pip install --quiet pillow
+    fi
+    echo "Starting Times Gate widget…"
+    pkill -f "timesgate_widget\.py" 2>/dev/null || true
+    python3 "$SCRIPT_DIR/timesgate_widget.py" > "$SCRIPT_DIR/.timesgate.log" 2>&1 &
+    TIMESGATE_WIDGET_PID=$!
+fi
+
+# Stop the tunnel supervisor + widget when the daemon exits (Ctrl-C included)
 cleanup() {
     if [ -f "${PINGGY_PID_FILE:-}" ]; then
         kill -- -"$(cat "$PINGGY_PID_FILE")" 2>/dev/null || true
         rm -f "$PINGGY_PID_FILE"
     fi
+    [ -n "$TIMESGATE_WIDGET_PID" ] && kill "$TIMESGATE_WIDGET_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
