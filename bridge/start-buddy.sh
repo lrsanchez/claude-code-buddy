@@ -21,11 +21,27 @@ for pkg in bleak aiohttp qrcode faster-whisper edge-tts; do
     fi
 done
 
-# ── Pinggy tunnel ─────────────────────────────────────────────────────────────
-# Set PINGGY_TOKEN in .env (Pinggy Pro) for a persistent URL on pro.pinggy.io.
-# Without a token, falls back to the free tier on a.pinggy.io (random URL,
-# sessions expire after ~60 min).
-if command -v ssh &>/dev/null; then
+# ── Pinggy tunnel (optional — only needed for access from OUTSIDE the LAN) ───
+# On the local network the app/R1 reach the daemon directly at this machine's
+# IP, so the tunnel is skipped unless you say yes (or set PINGGY_ENABLE=1/0 in
+# .env to skip the question). Set PINGGY_TOKEN (Pinggy Pro) for a persistent
+# URL; without it the free tier gives a random URL that expires after ~60 min.
+START_PINGGY="${PINGGY_ENABLE:-}"
+if [ -z "$START_PINGGY" ] && [ -t 0 ]; then
+    printf "Start Pinggy tunnel for remote (outside-LAN) access? [y/N] (No in 15s) "
+    REPLY=""
+    if read -r -t 15 REPLY; then :; else echo; fi
+    case "$REPLY" in
+        y|Y|yes|YES) START_PINGGY=1 ;;
+        *)           START_PINGGY=0 ;;
+    esac
+fi
+[ -z "$START_PINGGY" ] && START_PINGGY=1   # non-interactive: keep old behavior
+
+if [ "$START_PINGGY" != "1" ]; then
+    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    echo "  Pinggy skipped — LAN only. App URL: http://${LAN_IP:-<this-machine>}:$HTTP_PORT"
+elif command -v ssh &>/dev/null; then
     echo "Starting Pinggy tunnel on port $HTTP_PORT…"
     PINGGY_LOG="$SCRIPT_DIR/.pinggy.log"
     if [ -n "$PINGGY_TOKEN" ]; then

@@ -29,6 +29,70 @@ try:
 except ImportError:
     HAS_HTTP = False
 
+# ── Machine stats (CPU / RAM / GPU memory) ────────────────────────────────────
+# Shown on the Android app and the Times Gate "SYSTEM" widget. Linux-only
+# (/proc + amdgpu sysfs); returns None elsewhere so the key is simply absent.
+
+_cpu_prev: Optional[tuple] = None   # (idle, total) jiffies from the last sample
+_gpu_paths: Optional[tuple] = None  # cached ((used, total), …) sysfs path pairs
+
+
+def _find_gpu_paths():
+    """VRAM + GTT path pairs. On unified-memory APUs (e.g. Strix Halo) the
+    dedicated carve-out is tiny and real GPU allocations live in GTT, so
+    both are summed to reflect actual GPU memory usage."""
+    global _gpu_paths
+    if _gpu_paths is None:
+        import glob
+        _gpu_paths = ()
+        for total in sorted(glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")):
+            pairs = [(total.replace("_total", "_used"), total)]
+            gtt_total = os.path.join(os.path.dirname(total), "mem_info_gtt_total")
+            if os.path.exists(gtt_total):
+                pairs.append((gtt_total.replace("_total", "_used"), gtt_total))
+            _gpu_paths = tuple(pairs)
+            break
+    return _gpu_paths
+
+
+def machine_stats() -> Optional[dict]:
+    global _cpu_prev
+    try:
+        with open("/proc/stat") as f:
+            nums = [int(x) for x in f.readline().split()[1:]]
+        idle, total = nums[3] + nums[4], sum(nums)  # idle + iowait
+        cpu = -1
+        if _cpu_prev and total > _cpu_prev[1]:
+            didle, dtotal = idle - _cpu_prev[0], total - _cpu_prev[1]
+            cpu = round(100 * (1 - didle / dtotal))
+        _cpu_prev = (idle, total)
+
+        mem = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, val = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    mem[key] = int(val.split()[0]) * 1024
+                    if len(mem) == 2:
+                        break
+        out = {"cpu": cpu,
+               "ram_used": mem["MemTotal"] - mem["MemAvailable"],
+               "ram_total": mem["MemTotal"]}
+
+        paths = _find_gpu_paths()
+        if paths:
+            used = total = 0
+            for used_path, total_path in paths:
+                with open(used_path) as f:
+                    used += int(f.read())
+                with open(total_path) as f:
+                    total += int(f.read())
+            out["gpu_used"], out["gpu_total"] = used, total
+        return out
+    except Exception:
+        return None
+
+
 # ── NUS UUIDs ─────────────────────────────────────────────────────────────────
 NUS_SERVICE   = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 NUS_RX        = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # daemon writes snapshots here
@@ -890,6 +954,9 @@ body{{background:radial-gradient(900px 400px at 70% -10%,#13110e 0,transparent 6
             snap["prompt"] = active
         c = self._meter_cache
         snap.update({"s": c.s, "sr": c.sr, "w": c.w, "wr": c.wr})
+        m = machine_stats()
+        if m:
+            snap["machine"] = m
         return aweb.json_response(snap)
 
     async def _route_decision(self, request):

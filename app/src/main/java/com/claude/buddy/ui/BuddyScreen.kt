@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claude.buddy.protocol.ChatEntry
+import com.claude.buddy.protocol.MachineStats
 import com.claude.buddy.protocol.SessionInfo
 import com.claude.buddy.protocol.Snapshot
 import com.claude.buddy.state.BuddyDisplayState
@@ -136,6 +137,7 @@ private fun LandscapeLayout(
     weeklyResetMin = state.snapshot.wr,
     C = C,
 )
+            MachineStatsRow(state.snapshot.machine, C)
             SessionSelector(view, C)
             PanelToggle(activePanel, C, onPanel)
             AnimatedContent(targetState = activePanel,
@@ -188,6 +190,7 @@ private fun PortraitLayout(
     weeklyResetMin = state.snapshot.wr,
     C = C,
 )
+        MachineStatsRow(state.snapshot.machine, C)
         HorizontalDivider(color = C.divider, thickness = 1.dp)
         SessionSelector(view, C)
         PanelToggle(activePanel, C, onPanel)
@@ -508,8 +511,8 @@ private fun UsageRing(pct: Int, resetMin: Int, label: String, C: BuddyColors) {
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(54.dp)) {
-                val stroke = 5.dp.toPx()
+            Canvas(Modifier.size(72.dp)) {
+                val stroke = 6.dp.toPx()
                 val inset  = stroke / 2f
                 val sz     = Size(size.width - stroke, size.height - stroke)
                 val tl     = Offset(inset, inset)
@@ -521,13 +524,13 @@ private fun UsageRing(pct: Int, resetMin: Int, label: String, C: BuddyColors) {
             }
             Text(
                 text = if (pct >= 0) "$pct%" else "—",
-                fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = color,
+                fontSize = 15.sp, fontFamily = FontFamily.Monospace, color = color,
             )
         }
-        Text(label, fontSize = 8.sp, color = C.textSecondary)
+        Text(label, fontSize = 11.sp, color = C.textSecondary)
         Text(
             text = if (pct >= 0 && resetMin > 0) formatMins(resetMin) else "",
-            fontSize = 8.sp, color = C.textSecondary,
+            fontSize = 11.sp, color = C.textSecondary,
         )
     }
 }
@@ -559,17 +562,83 @@ fun TokenMeter(
         Spacer(Modifier.weight(1f))
         // Right group — personal progress
         Column(horizontalAlignment = Alignment.End) {
-            Text(formatTokens(tokensToday), fontSize = 18.sp, fontFamily = FontFamily.Monospace, color = C.textPrimary)
-            Text("today  ·  ${formatTokens(tokens)} total", style = MaterialTheme.typography.labelSmall, color = C.textSecondary)
+            Text(formatTokens(tokensToday), fontSize = 22.sp, fontFamily = FontFamily.Monospace, color = C.textPrimary)
+            Text("today  ·  ${formatTokens(tokens)} total", fontSize = 12.sp, color = C.textSecondary)
         }
         Spacer(Modifier.width(8.dp))
         Box(contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(44.dp)) {
-                val s = 4.dp.toPx()
+            Canvas(Modifier.size(52.dp)) {
+                val s = 5.dp.toPx()
                 drawArc(C.ringTrack, -90f, 360f, false, style = Stroke(s, cap = StrokeCap.Round))
                 drawArc(C.coral, -90f, animProg * 360f, false, style = Stroke(s, cap = StrokeCap.Round))
             }
-            Text("L$level", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = C.coral)
+            Text("L$level", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = C.coral)
+        }
+    }
+}
+
+// ── Machine stats (host CPU / RAM / GPU memory) ───────────────────────────────
+
+private fun statColor(pct: Int, C: BuddyColors) = when {
+    pct < 0   -> C.textSecondary.copy(alpha = 0.35f)
+    pct >= 90 -> C.red
+    pct >= 85 -> C.amber
+    pct >= 70 -> C.coral
+    else      -> C.teal
+}
+
+private fun pctOf(used: Long, total: Long): Int =
+    if (total > 0) ((100 * used + total / 2) / total).toInt() else -1
+
+private fun formatGb(bytes: Long): String {
+    val g = bytes / 1_073_741_824.0
+    return if (g < 10) "%.1fG".format(g) else "%.0fG".format(g)
+}
+
+@Composable
+fun MachineStatsRow(m: MachineStats?, C: BuddyColors = LocalBuddyColors.current) {
+    if (m == null) return
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        StatBar("cpu", m.cpu, "", C, Modifier.weight(1f))
+        StatBar("ram", pctOf(m.ramUsed, m.ramTotal), formatGb(m.ramUsed), C, Modifier.weight(1f))
+        if (m.gpuTotal > 0) {
+            StatBar("gpu", pctOf(m.gpuUsed, m.gpuTotal), formatGb(m.gpuUsed), C, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun StatBar(label: String, pct: Int, detail: String, C: BuddyColors, modifier: Modifier = Modifier) {
+    val color = statColor(pct, C)
+    val frac by animateFloatAsState(
+        if (pct >= 0) pct.coerceIn(0, 100) / 100f else 0f,
+        tween(800), label = "stat_$label",
+    )
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, fontSize = 13.sp, color = C.textSecondary)
+                if (detail.isNotEmpty()) {
+                    Text(detail, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+                        color = C.textSecondary.copy(alpha = 0.7f))
+                }
+            }
+            Text(
+                text = if (pct >= 0) "$pct%" else "—",
+                fontSize = 14.sp, fontFamily = FontFamily.Monospace, color = color,
+            )
+        }
+        Box(
+            Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(C.ringTrack)
+        ) {
+            Box(Modifier.fillMaxWidth(frac).fillMaxHeight().background(color))
         }
     }
 }

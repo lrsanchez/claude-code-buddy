@@ -40,6 +40,17 @@ data class Snapshot(
     val sr: Int = 0,    // session reset minutes
     val w: Int = -1,    // weekly usage %
     val wr: Int = 0,    // weekly reset minutes
+    val machine: MachineStats? = null, // host CPU/RAM/GPU (Linux daemon only)
+)
+
+// Host machine stats from the daemon (bytes; cpu -1 until the second sample)
+@Serializable
+data class MachineStats(
+    val cpu: Int = -1,
+    @SerialName("ram_used")  val ramUsed: Long = 0L,
+    @SerialName("ram_total") val ramTotal: Long = 0L,
+    @SerialName("gpu_used")  val gpuUsed: Long = 0L,
+    @SerialName("gpu_total") val gpuTotal: Long = 0L,
 )
 
 @Serializable

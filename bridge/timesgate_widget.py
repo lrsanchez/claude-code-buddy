@@ -8,6 +8,7 @@ Divoom pixel-art, no antialiasing. Refreshes every TIMESGATE_INTERVAL s:
   meter   — Claude usage rings: session 5h % + weekly 7d % (from /status)
   tokens  — output tokens today + active session counts (from /status)
   beeper  — unread chats from Beeper Desktop's local API (localhost:23373)
+  system  — host CPU % / RAM / GPU-memory bars (from /status "machine")
 
 Times Gate API quirks (differ from the Pixoo-64):
   * every request needs an integer LocalToken (Divoom app → device settings),
@@ -22,6 +23,7 @@ Config via environment / bridge/.env:
   TIMESGATE_LCD_METER   optional — screen 0-4 for the usage rings (default 1)
   TIMESGATE_LCD_TOKENS  optional — screen for tokens today (default 2)
   TIMESGATE_LCD_BEEPER  optional — screen for Beeper unreads (default 3)
+  TIMESGATE_LCD_SYSTEM  optional — screen for CPU/RAM/GPU bars (default 4)
   TIMESGATE_INTERVAL    optional — refresh seconds (default 30)
   BUDDY_TOKEN           required — daemon auth for /status
   BUDDY_HTTP_PORT       optional — daemon port (default 7700)
@@ -268,6 +270,40 @@ def render_tokens(status: dict) -> Image.Image:
     return img
 
 
+def _fmt_gib(n: int) -> str:
+    g = n / (1 << 30)
+    return f"{g:.1f}" if g < 10 else f"{g:.0f}"
+
+
+def render_system(machine) -> Image.Image:
+    """machine: {"cpu": %, "ram_used": bytes, "ram_total": bytes, "gpu_…"} or None."""
+    img, d = _blank("SYSTEM")
+    if not machine:
+        _waiting(d, "OFFLINE")
+        return img
+
+    rows = [("CPU", machine.get("cpu", -1), "")]
+    for key, label in (("ram", "RAM"), ("gpu", "GPU")):
+        used, total = machine.get(f"{key}_used"), machine.get(f"{key}_total")
+        if total:
+            rows.append((label, round(100 * used / total), f"{_fmt_gib(used)}G"))
+
+    y = 14
+    for label, pct, detail in rows:
+        color = severity_color(pct) if pct >= 0 else GRAY
+        x = ptext(d, 2, y, label, WHITE)
+        if detail:
+            ptext(d, x + 3, y, detail, GRAY)
+        pct_text = f"{pct}%" if pct >= 0 else "--"
+        ptext(d, CANVAS - 2 - ptext_w(pct_text), y, pct_text, color)
+        d.rectangle([2, y + 9, CANVAS - 3, y + 12], fill=TRACK)
+        if pct > 0:
+            fill_w = max(1, round((CANVAS - 5) * min(pct, 100) / 100))
+            d.rectangle([2, y + 9, 2 + fill_w - 1, y + 12], fill=color)
+        y += 17
+    return img
+
+
 def render_beeper(chats, error: str = "") -> Image.Image:
     """chats: list of (title, unread_count), or None when unavailable."""
     img, d = _blank("BEEPER")
@@ -416,14 +452,17 @@ def main():
         os.makedirs(outdir, exist_ok=True)
         if "--demo" in sys.argv:
             status = {"s": 42, "sr": 137, "w": 87, "wr": 3990,
-                      "tokens_today": 3178220, "total": 5, "running": 3, "waiting": 1}
+                      "tokens_today": 3178220, "total": 5, "running": 3, "waiting": 1,
+                      "machine": {"cpu": 37, "ram_used": 88 << 30, "ram_total": 121 << 30,
+                                  "gpu_used": 3865470566, "gpu_total": 4 << 30}}
             chats = [("Maria", 3), ("dev-alerts", 12), ("Work group", 1), ("Bob", 2)]
         else:
             status = fetch_status(port, buddy_token)
             chats = fetch_beeper_unreads(bp_token) if bp_token else None
         for name, img in [("meter", render_meter(status)),
                           ("tokens", render_tokens(status)),
-                          ("beeper", render_beeper(chats, "NO TOKEN"))]:
+                          ("beeper", render_beeper(chats, "NO TOKEN")),
+                          ("system", render_system(status.get("machine")))]:
             img.resize((SIZE, SIZE), Image.NEAREST).save(os.path.join(outdir, f"tg_{name}.png"))
         print(f"previews → {outdir}/tg_*.png")
         return
@@ -441,6 +480,7 @@ def main():
                       os.environ.get("TIMESGATE_LCD", 1))),
         "tokens": int(os.environ.get("TIMESGATE_LCD_TOKENS", 2)),
         "beeper": int(os.environ.get("TIMESGATE_LCD_BEEPER", 3)),
+        "system": int(os.environ.get("TIMESGATE_LCD_SYSTEM", 4)),
     }
 
     gate = TimesGate(pinned_ip or "0.0.0.0", int(local_token))
@@ -494,6 +534,11 @@ def main():
         widgets = {"meter": render_meter(status), "tokens": render_tokens(status)}
         if beeper_img is not None:
             widgets["beeper"] = beeper_img
+        if "machine" in status:
+            widgets["system"] = render_system(status["machine"])
+        elif status.get("s", -1) < 0:
+            widgets["system"] = render_system(None)  # daemon offline
+        # else: daemon up but no machine stats (non-Linux) — leave screen alone
 
         push_failed = False
         for name, img in widgets.items():
