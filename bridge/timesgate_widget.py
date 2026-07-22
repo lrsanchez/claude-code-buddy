@@ -327,9 +327,13 @@ def discover_ip() -> str:
 
 class TimesGate:
     def __init__(self, ip: str, local_token: int):
-        self.url = f"http://{ip}/post"
+        self.set_ip(ip)
         self.token = local_token
         self.pic_id = 0
+
+    def set_ip(self, ip: str):
+        self.ip = ip
+        self.url = f"http://{ip}/post"
 
     def send(self, command: dict) -> dict:
         resp = _post_json(self.url, {**command, "LocalToken": self.token})
@@ -430,7 +434,7 @@ def main():
     if not buddy_token:
         sys.exit("BUDDY_TOKEN not set")
 
-    ip = os.environ.get("TIMESGATE_IP") or discover_ip()
+    pinned_ip = os.environ.get("TIMESGATE_IP", "")
     interval = int(os.environ.get("TIMESGATE_INTERVAL", 30))
     screens = {
         "meter":  int(os.environ.get("TIMESGATE_LCD_METER",
@@ -439,9 +443,33 @@ def main():
         "beeper": int(os.environ.get("TIMESGATE_LCD_BEEPER", 3)),
     }
 
-    gate = TimesGate(ip, int(local_token))
-    gate.reset_pic_id()
-    print(f"Times Gate widgets → {ip} {screens}, every {interval}s", flush=True)
+    gate = TimesGate(pinned_ip or "0.0.0.0", int(local_token))
+
+    def find_device() -> bool:
+        """(Re)locate the Times Gate: LAN discovery first (DHCP can move the
+        device), falling back to the pinned TIMESGATE_IP if the cloud is down."""
+        candidates = []
+        try:
+            candidates.append(discover_ip())
+        except Exception as e:
+            print(f"discovery failed: {e}", flush=True)
+        if pinned_ip and pinned_ip not in candidates:
+            candidates.append(pinned_ip)
+        for ip in candidates:
+            try:
+                gate.set_ip(ip)
+                gate.reset_pic_id()
+                return True
+            except Exception as e:
+                print(f"no Times Gate at {ip}: {e}", flush=True)
+        return False
+
+    while not find_device():
+        if "--once" in sys.argv:
+            sys.exit("Times Gate unreachable")
+        print(f"Times Gate unreachable — retrying in {interval}s", flush=True)
+        time.sleep(interval)
+    print(f"Times Gate widgets → {gate.ip} {screens}, every {interval}s", flush=True)
 
     last: dict = {}
     while True:
@@ -467,6 +495,7 @@ def main():
         if beeper_img is not None:
             widgets["beeper"] = beeper_img
 
+        push_failed = False
         for name, img in widgets.items():
             try:
                 jpg = jpeg_bytes(img)
@@ -476,6 +505,12 @@ def main():
             except Exception as e:
                 print(f"push {name} failed: {e}", flush=True)
                 last.pop(name, None)  # force redraw on recovery
+                push_failed = True
+        if push_failed:
+            # Device may have rebooted or picked up a new DHCP lease
+            if find_device():
+                print(f"reconnected at {gate.ip}", flush=True)
+                last.clear()  # PicID was reset — repaint every screen
         if "--once" in sys.argv:
             break
         time.sleep(interval)
