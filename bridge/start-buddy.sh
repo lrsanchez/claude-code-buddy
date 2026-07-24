@@ -39,8 +39,15 @@ fi
 [ -z "$START_PINGGY" ] && START_PINGGY=1   # non-interactive: keep old behavior
 
 if [ "$START_PINGGY" != "1" ]; then
+    # The daemon binds 0.0.0.0, so it's reachable on every local interface —
+    # give the app both URLs (LAN as primary, Tailscale as fallback).
     LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    echo "  Pinggy skipped — LAN only. App URL: http://${LAN_IP:-<this-machine>}:$HTTP_PORT"
+    TS_IP=$(tailscale ip -4 2>/dev/null | head -n1) || true
+    echo "  Pinggy skipped — daemon reachable at:"
+    echo "    LAN:       http://${LAN_IP:-<this-machine>}:$HTTP_PORT"
+    if [ -n "$TS_IP" ]; then
+        echo "    Tailscale: http://$TS_IP:$HTTP_PORT"
+    fi
 elif command -v ssh &>/dev/null; then
     echo "Starting Pinggy tunnel on port $HTTP_PORT…"
     PINGGY_LOG="$SCRIPT_DIR/.pinggy.log"
