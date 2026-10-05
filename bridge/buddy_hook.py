@@ -17,6 +17,14 @@ import time
 SOCKET_PATH = "/tmp/claude-buddy.sock"
 TIMEOUT_S   = PROMPT_TIMEOUT = 130  # slightly above daemon's 120 s
 
+# Only these permission modes can actually prompt for a tool call, so only
+# here is it worth blocking on a tablet tap. In auto (classifier decides) and
+# the non-prompting modes the CLI never asks, so the daemon would just sit out
+# its whole decision timeout on every call for nothing. "manual" is the CLI's
+# alias for "default". acceptEdits/plan also prompt for some tools but are
+# left out on purpose (manual only); add them here to capture those too.
+APPROVAL_MODES = {"default", "manual"}
+
 
 def send_to_daemon(msg: dict) -> dict:
     try:
@@ -97,6 +105,11 @@ def main():
         return
 
     if event_name == "PreToolUse":
+        if permission_mode not in APPROVAL_MODES:
+            # Not a manual-approval session: don't contact the daemon, so no
+            # decision wait and no stale approval card on the tablet.
+            sys.stdout.write(json.dumps({"continue": True}))
+            return
         hint = build_hint(tool_name, tool_input)
         resp = send_to_daemon({
             "event":            "pre_tool",
