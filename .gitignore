@@ -10,7 +10,6 @@ local.properties
 .DS_Store
 
 # Gradle wrapper cache
-gradle/wrapper/gradle-wrapper.jar
 
 # Secrets
 *.keystore
