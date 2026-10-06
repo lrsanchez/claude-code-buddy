@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import com.claude.buddy.haptics.*
 import com.claude.buddy.permissions.REQUIRED_PERMISSIONS
 import com.claude.buddy.permissions.allPermissionsGranted
 import com.claude.buddy.service.BuddyService
@@ -20,6 +21,7 @@ import com.claude.buddy.ui.theme.BuddyTheme
 class MainActivity : ComponentActivity() {
 
     private var buddyService by mutableStateOf<BuddyService?>(null)
+    private val haptics = HapticsController(VibratorHapticSink(this))
     private var serviceBound = false
 
     private val connection = object : ServiceConnection {
@@ -74,10 +76,12 @@ class MainActivity : ComponentActivity() {
                         state     = state,
                         onApprove = {
                             val id = state.snapshot.prompt?.id ?: return@BuddyScreen
+                            haptics.play(HapticEvent.APPROVE)
                             service.sendDecision(id, approve = true)
                         },
                         onDeny = {
                             val id = state.snapshot.prompt?.id ?: return@BuddyScreen
+                            haptics.play(HapticEvent.DENY)
                             service.sendDecision(id, approve = false)
                         },
                         onToggleTheme        = { service.stateManager.toggleTheme() },
@@ -85,6 +89,13 @@ class MainActivity : ComponentActivity() {
                         onToggleAutoApprove  = { service.stateManager.toggleAutoApprove() },
                         onClearChat          = { service.clearChat() },
                     )
+
+                    LaunchedEffect(state.pendingCelebrate) {
+                        if (state.pendingCelebrate) {
+                            haptics.play(HapticEvent.LEVEL_UP)
+                            service?.stateManager?.clearCelebrate()
+                        }
+                    }
                 } else {
                     BuddyScreen(state = state, onApprove = {}, onDeny = {})
                 }

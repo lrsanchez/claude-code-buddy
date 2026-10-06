@@ -52,5 +52,19 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.datastore.preferences)
     implementation(libs.androidx.appcompat)
+    testImplementation(libs.junit)
     debugImplementation(libs.compose.ui.tooling)
+}
+
+// AGP registers `test` as a lifecycle task across all variants, and lifecycle
+// tasks reject Gradle's `--tests` filter. Replace it with the real unit-test
+// task (created after the variants are registered) so that
+// `./gradlew :app:test --tests Foo` works like in any JVM project.
+afterEvaluate {
+    val unitTest = tasks.named<Test>("testDebugUnitTest")
+    val allUnitTests = tasks.replace("test", Test::class.java)
+    allUnitTests.group           = "verification"
+    allUnitTests.description     = "Run unit tests for all variants."
+    allUnitTests.testClassesDirs = files(unitTest.map { it.testClassesDirs })
+    allUnitTests.classpath       = files(unitTest.map { it.classpath })
 }
