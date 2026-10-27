@@ -353,12 +353,11 @@ def _get_json(url: str, token: str, timeout: int = 8) -> dict:
         return json.loads(resp.read().decode())
 
 
-def discover_ip() -> str:
-    """Find the first Times Gate on the LAN via the Divoom cloud."""
+def discover_ips() -> list:
+    """Divoom devices on the LAN via the Divoom cloud. May include other
+    Divoom products (e.g. a TimesFrame), so callers probe each one."""
     data = _post_json("https://app.divoom-gz.com/Device/ReturnSameLANDevice", {})
-    for dev in data.get("DeviceList", []):
-        return dev["DevicePrivateIP"]
-    raise RuntimeError("no Divoom device found on the LAN (set TIMESGATE_IP)")
+    return [dev["DevicePrivateIP"] for dev in data.get("DeviceList", [])]
 
 
 class TimesGate:
@@ -490,7 +489,7 @@ def main():
         device), falling back to the pinned TIMESGATE_IP if the cloud is down."""
         candidates = []
         try:
-            candidates.append(discover_ip())
+            candidates.extend(discover_ips())
         except Exception as e:
             print(f"discovery failed: {e}", flush=True)
         if pinned_ip and pinned_ip not in candidates:
