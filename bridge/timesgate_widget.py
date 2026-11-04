@@ -5,8 +5,10 @@ Renders up to three widgets on a 64×64 canvas with a 5×7 pixel font, then
 nearest-neighbor upscales ×2 to the Times Gate's 128×128 LCDs — proper chunky
 Divoom pixel-art, no antialiasing. Refreshes every TIMESGATE_INTERVAL s:
 
-  meter   — Claude usage rings: session 5h % + weekly 7d % (from /status)
-  tokens  — output tokens today + active session counts (from /status)
+  meter   — Claude usage rings: session 5h % + weekly 7d % (from /status);
+            a window the plan no longer reports is simply not drawn
+  buddy   — animated Claude buddy (like the Android app): idle / working /
+            needs-you / sleep, plus session counts (from /status)
   beeper  — unread chats from Beeper Desktop's local API (localhost:23373)
   system  — host CPU % / RAM / GPU-memory bars (from /status "machine")
 
@@ -21,10 +23,10 @@ Config via environment / bridge/.env:
   TIMESGATE_TOKEN       required — LocalToken from the Divoom app
   TIMESGATE_IP          optional — device IP (auto-discovered if unset)
   TIMESGATE_LCD_METER   optional — screen 0-4 for the usage rings (default 1)
-  TIMESGATE_LCD_TOKENS  optional — screen for tokens today (default 2)
+  TIMESGATE_LCD_BUDDY   optional — screen for the animated buddy (default 2)
   TIMESGATE_LCD_BEEPER  optional — screen for Beeper unreads (default 3)
   TIMESGATE_LCD_SYSTEM  optional — screen for CPU/RAM/GPU bars (default 4)
-  TIMESGATE_INTERVAL    optional — refresh seconds (default 30)
+  TIMESGATE_INTERVAL    optional — refresh seconds (default 10)
   BUDDY_TOKEN           required — daemon auth for /status
   BUDDY_HTTP_PORT       optional — daemon port (default 7700)
 
@@ -40,6 +42,7 @@ Usage:
 import base64
 import io
 import json
+import math
 import os
 import sys
 import time
@@ -203,14 +206,6 @@ def _fmt_reset(minutes: int) -> str:
     return f"{m}M"
 
 
-def _fmt_tokens(n: int) -> str:
-    if n >= 10_000_000: return f"{n/1e6:.1f}M"
-    if n >= 1_000_000:  return f"{n/1e6:.2f}M"
-    if n >= 100_000:    return f"{n/1e3:.0f}K"
-    if n >= 10_000:     return f"{n/1e3:.1f}K"
-    return str(n)
-
-
 def _blank(label: str):
     img = Image.new("RGB", (CANVAS, CANVAS), BLACK)
     d = ImageDraw.Draw(img)
@@ -227,15 +222,16 @@ def _waiting(d, msg: str):
 
 def render_meter(status: dict) -> Image.Image:
     img, d = _blank("CLAUDE")
-    if status.get("s", -1) < 0:
+    # -1 = window not reported (e.g. plan without a 5h limit): skip its ring
+    rings = [r for r in (
+        (status.get("s", -1), status.get("sr", 0), "5H"),
+        (status.get("w", -1), status.get("wr", 0), "7D"),
+    ) if r[0] >= 0]
+    if not rings:
         _waiting(d, "WAITING")
         return img
 
-    rings = [
-        (16, status["s"], status.get("sr", 0), "5H"),
-        (48, status["w"], status.get("wr", 0), "7D"),
-    ]
-    for cx, pct, reset_min, label in rings:
+    for cx, (pct, reset_min, label) in zip((32,) if len(rings) == 1 else (16, 48), rings):
         color = severity_color(pct)
         _ring(d, cx, 29, 13, 3, pct, color)
         pct_text = f"{pct}%" if pct < 100 else "100"
@@ -247,27 +243,61 @@ def render_meter(status: dict) -> Image.Image:
     return img
 
 
-def render_tokens(status: dict) -> Image.Image:
-    img, d = _blank("TODAY")
-    text = _fmt_tokens(status.get("tokens_today", 0))
-    scale = 2 if ptext_w(text, 2) <= CANVAS - 2 else 1
-    ptext_center(d, CANVAS // 2, 16, text, WHITE, scale)
-    ptext_center(d, CANVAS // 2, 34, "TOKENS", GRAY)
+def _dim(color, a: float):
+    return tuple(int(c * a) for c in color)
 
-    total   = status.get("total", 0)
-    running = status.get("running", 0)
-    waiting = status.get("waiting", 0)
-    parts = [(f"{total}S", WHITE if total else GRAY),
-             (f"{running}R", TEAL if running else GRAY)]
-    if waiting > 0:
-        parts.append((f"{waiting}W", AMBER))
-    text_all = "·".join(t for t, _ in parts)
-    x = CANVAS // 2 - ptext_w(text_all) // 2
-    for i, (t, color) in enumerate(parts):
-        x = ptext(d, x, 50, t, color)
-        if i < len(parts) - 1:
-            x = ptext(d, x, 50, "·", GRAY)
-    return img
+
+# state → (body, frames, ms/frame, title, blink frames). One loop = the app's
+# bob cycle (2× its tween): idle 3 s, busy 1.2 s, sleep 6 s.
+_BUDDY = {
+    "idle":      (_dim(CORAL, 0.8), 12, 250, "IDLE",      (7,)),
+    "busy":      (_dim(TEAL, 0.9),   8, 150, "WORKING",   (5,)),
+    "attention": (AMBER,            12, 250, "NEEDS YOU", (3, 9)),
+    "sleep":     (_dim(GRAY, 0.4),  12, 500, "SLEEP",     tuple(range(12))),
+}
+
+
+def buddy_state(status: dict) -> str:
+    if status.get("offline"):
+        return "sleep"
+    if status.get("waiting", 0) > 0:
+        return "attention"
+    return "busy" if status.get("running", 0) > 0 else "idle"
+
+
+def render_buddy(status: dict, state: str = ""):
+    """→ (frames, ms per frame) for the animated buddy."""
+    state = state or buddy_state(status)
+    body, n, speed, title, blinks = _BUDDY[state]
+    frames = []
+    for i in range(n):
+        img, d = _blank(title)
+        cx, cy, r = 32, 30 + round(2 * math.sin(2 * math.pi * i / n)), 15
+        if state == "attention" and (i // 3) % 2 == 0:
+            d.ellipse([cx - r - 3, cy - r - 3, cx + r + 3, cy + r + 3], fill=_dim(AMBER, 0.35))
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=body)
+        for ex in (cx - 6, cx + 6):
+            if i in blinks:
+                d.line([ex - 1, cy - 2, ex + 1, cy - 2], fill=BLACK)
+            else:
+                d.ellipse([ex - 1, cy - 3, ex + 1, cy - 1], fill=BLACK)
+        if state == "busy":
+            d.arc([cx - 6, cy + 1, cx + 6, cy + 9], 20, 160, fill=_dim(body, 0.4))
+        if state == "sleep":
+            ptext(d, 46, 20 - i // 4, "Z", GRAY)
+
+        total, running, waiting = (status.get(k, 0) for k in ("total", "running", "waiting"))
+        parts = [(f"{total}S", WHITE if total else GRAY),
+                 (f"{running}R", TEAL if running else GRAY)]
+        if waiting > 0:
+            parts.append((f"{waiting}W", AMBER))
+        x = CANVAS // 2 - ptext_w("·".join(t for t, _ in parts)) // 2
+        for k, (t, color) in enumerate(parts):
+            x = ptext(d, x, 54, t, color)
+            if k < len(parts) - 1:
+                x = ptext(d, x, 54, "·", GRAY)
+        frames.append(img)
+    return frames, speed
 
 
 def _fmt_gib(n: int) -> str:
@@ -381,20 +411,23 @@ class TimesGate:
         self.send({"Command": "Draw/ResetHttpGifId"})
         self.pic_id = 0
 
-    def push_jpeg(self, jpg: bytes, screen: int):
+    def push_frames(self, jpgs, screen: int, speed: int = 1000):
+        """One frame = still image; several = looping animation (same PicID,
+        PicOffset = frame index, PicSpeed = ms per frame)."""
         lcd = [0] * 5
         lcd[screen] = 1
         self.pic_id += 1
-        self.send({
-            "Command": "Draw/SendHttpGif",
-            "LcdArray": lcd,
-            "PicNum": 1,
-            "PicWidth": SIZE,
-            "PicOffset": 0,
-            "PicID": self.pic_id,
-            "PicSpeed": 1000,
-            "PicData": base64.b64encode(jpg).decode(),
-        })
+        for offset, jpg in enumerate(jpgs):
+            self.send({
+                "Command": "Draw/SendHttpGif",
+                "LcdArray": lcd,
+                "PicNum": len(jpgs),
+                "PicWidth": SIZE,
+                "PicOffset": offset,
+                "PicID": self.pic_id,
+                "PicSpeed": speed,
+                "PicData": base64.b64encode(jpg).decode(),
+            })
 
 
 def fetch_status(port: int, buddy_token: str) -> dict:
@@ -459,11 +492,15 @@ def main():
             status = fetch_status(port, buddy_token)
             chats = fetch_beeper_unreads(bp_token) if bp_token else None
         for name, img in [("meter", render_meter(status)),
-                          ("tokens", render_tokens(status)),
                           ("beeper", render_beeper(chats, "NO TOKEN")),
                           ("system", render_system(status.get("machine")))]:
             img.resize((SIZE, SIZE), Image.NEAREST).save(os.path.join(outdir, f"tg_{name}.png"))
-        print(f"previews → {outdir}/tg_*.png")
+        for state in (_BUDDY if "--demo" in sys.argv else [buddy_state(status)]):
+            frames, speed = render_buddy(status, state)
+            big = [f.resize((SIZE, SIZE), Image.NEAREST) for f in frames]
+            big[0].save(os.path.join(outdir, f"tg_buddy_{state}.gif"), save_all=True,
+                        append_images=big[1:], duration=speed, loop=0)
+        print(f"previews → {outdir}/tg_*.png|gif")
         return
 
     local_token = os.environ.get("TIMESGATE_TOKEN", "")
@@ -473,11 +510,12 @@ def main():
         sys.exit("BUDDY_TOKEN not set")
 
     pinned_ip = os.environ.get("TIMESGATE_IP", "")
-    interval = int(os.environ.get("TIMESGATE_INTERVAL", 30))
+    interval = int(os.environ.get("TIMESGATE_INTERVAL", 10))
     screens = {
         "meter":  int(os.environ.get("TIMESGATE_LCD_METER",
                       os.environ.get("TIMESGATE_LCD", 1))),
-        "tokens": int(os.environ.get("TIMESGATE_LCD_TOKENS", 2)),
+        "buddy":  int(os.environ.get("TIMESGATE_LCD_BUDDY",
+                      os.environ.get("TIMESGATE_LCD_TOKENS", 2))),
         "beeper": int(os.environ.get("TIMESGATE_LCD_BEEPER", 3)),
         "system": int(os.environ.get("TIMESGATE_LCD_SYSTEM", 4)),
     }
@@ -516,7 +554,7 @@ def main():
             status = fetch_status(port, buddy_token)
         except Exception as e:
             print(f"status fetch failed: {e}", flush=True)
-            status = {"s": -1}
+            status = {"offline": True}
 
         if bp_token:
             try:
@@ -530,22 +568,23 @@ def main():
         else:
             beeper_img = None  # widget disabled — leave the screen alone
 
-        widgets = {"meter": render_meter(status), "tokens": render_tokens(status)}
+        widgets = {"meter": ([render_meter(status)], 1000),
+                   "buddy": render_buddy(status)}
         if beeper_img is not None:
-            widgets["beeper"] = beeper_img
+            widgets["beeper"] = ([beeper_img], 1000)
         if "machine" in status:
-            widgets["system"] = render_system(status["machine"])
-        elif status.get("s", -1) < 0:
-            widgets["system"] = render_system(None)  # daemon offline
+            widgets["system"] = ([render_system(status["machine"])], 1000)
+        elif status.get("offline"):
+            widgets["system"] = ([render_system(None)], 1000)  # daemon offline
         # else: daemon up but no machine stats (non-Linux) — leave screen alone
 
         push_failed = False
-        for name, img in widgets.items():
+        for name, (imgs, speed) in widgets.items():
             try:
-                jpg = jpeg_bytes(img)
-                if jpg != last.get(name):
-                    gate.push_jpeg(jpg, screens[name])
-                    last[name] = jpg
+                jpgs = [jpeg_bytes(img) for img in imgs]
+                if jpgs != last.get(name):
+                    gate.push_frames(jpgs, screens[name], speed)
+                    last[name] = jpgs
             except Exception as e:
                 print(f"push {name} failed: {e}", flush=True)
                 last.pop(name, None)  # force redraw on recovery
