@@ -680,10 +680,10 @@ class BuddyDaemon:
         w  = utilization_pct("anthropic-ratelimit-unified-7d-utilization")
         wr = mins_until_epoch("anthropic-ratelimit-unified-7d-reset")
 
-        if s  is not None: c.s  = s
-        if sr is not None: c.sr = sr
-        if w  is not None: c.w  = w
-        if wr is not None: c.wr = wr
+        # A window whose headers vanish (plan has no such limit) must read as
+        # unknown, not keep its last value forever.
+        c.s,  c.sr = (-1, 0) if s is None else (s, sr or 0)
+        c.w,  c.wr = (-1, 0) if w is None else (w, wr or 0)
 
     async def _poll_meter(self):
         access_token = self._read_claude_token()
