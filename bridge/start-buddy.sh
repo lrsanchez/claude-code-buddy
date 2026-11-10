@@ -14,10 +14,20 @@ fi
 HTTP_PORT="${BUDDY_HTTP_PORT:-7700}"
 
 # Ensure Python dependencies are installed
-for pkg in bleak aiohttp qrcode faster-whisper edge-tts; do
+for pkg in bleak aiohttp qrcode; do
     if ! python3 -c "import ${pkg//-/_}" 2>/dev/null; then
         echo "Installing $pkg..."
         python3 -m pip install --quiet "$pkg"
+    fi
+done
+# Voice (R1 voice creation) is optional: faster-whisper needs PyAV, which can
+# fail to build without FFmpeg dev libs. Warn and carry on; the daemon just
+# runs without voice.
+for pkg in faster-whisper edge-tts; do
+    if ! python3 -c "import ${pkg//-/_}" 2>/dev/null; then
+        echo "Installing $pkg (optional, voice)..."
+        python3 -m pip install --quiet "$pkg" \
+            || echo "  ! $pkg failed to install — continuing without voice"
     fi
 done
 
